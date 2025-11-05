@@ -544,24 +544,16 @@ def create_ml_model(features, abc_analysis):
             final_features['prob_dying'] = clf.predict_proba(X)[:, 1] * 100
             test_score = clf.score(X_test, y_test)
 
-            # Сохраняем feature importance
-            feature_importance = pd.DataFrame({
-                'feature': feature_cols,
-                'importance': clf.feature_importances_
-            }).sort_values('importance', ascending=False)
-
         except Exception as e:
             st.warning(f"⚠️ Ошибка ML: {e}. Используем простую логику.")
             final_features['prob_dying'] = final_features['label'].astype(float) * 100
             test_score = 0.0
-            feature_importance = None
     else:
         st.warning("⚠️ Недостаточно данных для ML. Используем простую логику.")
         final_features['prob_dying'] = final_features['label'].astype(float) * 100
         test_score = 0.0
-        feature_importance = None
 
-    return final_features, test_score, feature_importance
+    return final_features, test_score
 
 def create_prophet_forecasts(df, abc_analysis):
     if not PROPHET_AVAILABLE:
@@ -685,7 +677,7 @@ def get_recommendations(row):
 df, weekly, all_arts, unique_weeks = process_data(df)
 abc_analysis = calculate_abc_xyz_analysis(df)
 features = calculate_features(weekly, df)
-final_features, test_score, feature_importance = create_ml_model(features, abc_analysis)
+final_features, test_score = create_ml_model(features, abc_analysis)
 forecast_df = create_prophet_forecasts(df, abc_analysis)
 
 # Финальная таблица
@@ -806,133 +798,3 @@ with st.expander("ℹ️ Информация"):
     st.write(f"**Статус:** Prophet {'✅' if PROPHET_AVAILABLE else '❌'}, Обработано: {len(final)}")
     if not PROPHET_AVAILABLE:
         st.warning("⚠️ Установите Prophet: pip install prophet")
-
-# === РЕКОМЕНДАЦИИ ML/DS ИНЖЕНЕРА ===
-st.header("🎓 Рекомендации Data Scientist")
-
-with st.expander("📊 Feature Importance - Важность признаков модели", expanded=True):
-    if feature_importance is not None:
-        st.write("**Влияние признаков на решение модели:**")
-
-        # Визуализация важности признаков
-        col1, col2 = st.columns([2, 1])
-
-        with col1:
-            # Используем st.bar_chart для простой визуализации
-            chart_data = feature_importance.set_index('feature')['importance']
-            st.bar_chart(chart_data)
-
-        with col2:
-            st.write("**Топ-5 признаков:**")
-            for idx, row in feature_importance.head(5).iterrows():
-                importance_pct = row['importance'] * 100
-                st.metric(
-                    label=row['feature'],
-                    value=f"{importance_pct:.1f}%"
-                )
-
-        st.divider()
-        st.write("**Интерпретация:**")
-
-        # Анализ топового признака
-        top_feature = feature_importance.iloc[0]['feature']
-        top_importance = feature_importance.iloc[0]['importance'] * 100
-
-        if top_feature == 'consecutive_zeros':
-            st.info(f"🔍 **Последовательные недели без продаж** - наиболее важный фактор ({top_importance:.1f}%). Товары с длительным отсутствием продаж имеют высокую вероятность снятия.")
-        elif top_feature == 'no_store_ratio':
-            st.info(f"🔍 **Доля магазинов без продаж** - ключевой индикатор ({top_importance:.1f}%). Низкое распространение товара критично для решений.")
-        elif top_feature == 'total_qty':
-            st.info(f"🔍 **Общий объём продаж** - главный фактор ({top_importance:.1f}%). Товары с низким оборотом попадают под снятие.")
-
-    else:
-        st.warning("⚠️ Feature importance недоступна - модель не обучена")
-
-with st.expander("💡 Ключевые инсайты и рекомендации", expanded=True):
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("📌 Основные находки")
-
-        # Анализ по категориям
-        c_category_remove = len(final[(final['abc_category'] == 'C') & (final['Рекомендация'] == '🚫 Снять')])
-        b_category_remove = len(final[(final['abc_category'] == 'B') & (final['Рекомендация'] == '🚫 Снять')])
-        a_category_remove = len(final[(final['abc_category'] == 'A') & (final['Рекомендация'] == '🚫 Снять')])
-
-        st.write(f"""
-        **Распределение решений по ABC:**
-        - Категория C: {c_category_remove} к снятию ({c_category_remove/len(final[final['abc_category']=='C'])*100:.1f}%)
-        - Категория B: {b_category_remove} к снятию ({b_category_remove/len(final[final['abc_category']=='B'])*100 if len(final[final['abc_category']=='B'])>0 else 0:.1f}%)
-        - Категория A: {a_category_remove} к снятию ({a_category_remove/len(final[final['abc_category']=='A'])*100 if len(final[final['abc_category']=='A'])>0 else 0:.1f}%)
-        """)
-
-        # Средние метрики
-        avg_zero_weeks_remove = final[final['Рекомендация'] == '🚫 Снять']['consecutive_zeros'].mean()
-        avg_zero_weeks_keep = final[final['Рекомендация'] == '✅ Оставить']['consecutive_zeros'].mean()
-
-        st.write(f"""
-        **Средние показатели:**
-        - Среднее недель без продаж (снять): {avg_zero_weeks_remove:.1f}
-        - Среднее недель без продаж (оставить): {avg_zero_weeks_keep:.1f}
-        - Разница: **{avg_zero_weeks_remove - avg_zero_weeks_keep:.1f}x**
-        """)
-
-    with col2:
-        st.subheader("🎯 Рекомендации")
-
-        st.write("""
-        **1. Приоритизация снятия:**
-        - Начните с категории C с высокой `consecutive_zeros`
-        - Товары с `no_store_ratio > 85%` - первая волна
-        - Проверьте Prophet прогнозы для топ-товаров
-
-        **2. Товары "Наблюдать":**
-        - Установите автомониторинг на 4-6 недель
-        - Проведите A/B тест скидок перед снятием
-        - Проверьте сезонность продаж
-
-        **3. Улучшение модели:**
-        - Добавьте сезонные признаки (месяц, квартал)
-        - Учитывайте ценовую историю
-        - Интегрируйте данные о маркетинговых акциях
-
-        **4. Бизнес-процессы:**
-        - Автоматизируйте еженедельный мониторинг
-        - Создайте дашборд для отслеживания метрик
-        - Внедрите систему алертов для критичных товаров
-        """)
-
-with st.expander("🔬 Метрики качества модели", expanded=False):
-    st.write(f"""
-    **Статистика модели:**
-    - Точность на тестовой выборке: **{test_score:.2%}** {'✅' if test_score > 0.7 else '⚠️' if test_score > 0.5 else '❌'}
-    - Всего обработано товаров: **{len(final)}**
-    - Положительных меток (к снятию): **{candidates_remove}** ({candidates_remove/total_products*100:.1f}%)
-    - Порог модели: **{final_threshold*100:.0f}%**
-    """)
-
-    if test_score > 0:
-        if test_score > 0.8:
-            st.success("✅ Отличная точность модели! Рекомендации можно применять с высокой уверенностью.")
-        elif test_score > 0.65:
-            st.info("ℹ️ Хорошая точность. Рекомендуется дополнительная валидация критичных решений.")
-        else:
-            st.warning("⚠️ Умеренная точность. Используйте модель как вспомогательный инструмент, не единственный критерий.")
-
-    st.write("""
-    **Методология:**
-    - Алгоритм: Random Forest Classifier (30 деревьев)
-    - Балансировка классов: {'Включена' if use_balanced_model else 'Выключена'}
-    - Валидация: Train/Test Split (70/30)
-    - Признаки: Временные ряды, ABC/XYZ, распределение по магазинам
-    """)
-
-    if feature_importance is not None:
-        st.write("**Все признаки модели:**")
-        st.dataframe(
-            feature_importance.style.format({'importance': '{:.2%}'}),
-            use_container_width=True
-        )
-
-st.divider()
-st.caption("🤖 Отчёт сгенерирован ML-системой анализа товарного портфеля | Data Science & ML Engineering")
