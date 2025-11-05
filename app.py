@@ -17,8 +17,13 @@ from io import BytesIO
 
 st.set_page_config(page_title="Анализ товаров", layout="wide")
 
+# Инициализация session_state
 if 'run_analysis' not in st.session_state:
     st.session_state.run_analysis = False
+if 'loaded_data' not in st.session_state:
+    st.session_state.loaded_data = None
+if 'data_source_type' not in st.session_state:
+    st.session_state.data_source_type = None
 
 st.title("🔍 Анализ товаров: определение кандидатов на снятие")
 
@@ -26,39 +31,125 @@ st.title("🔍 Анализ товаров: определение кандид�
 with st.sidebar:
     st.header("⚙️ Настройки")
     TOP_N = st.slider("Количество топ-артикулов для Prophet", 10, 50, 20)
-    
+
     st.subheader("🎯 Критерии снятия")
     zero_weeks_threshold = st.slider("Недель подряд без продаж", 8, 20, 12)
     min_total_sales = st.slider("Минимальный объем продаж", 1, 50, 5)
     max_store_ratio = st.slider("Макс. доля магазинов без продаж (%)", 70, 95, 85, 5) / 100
-    
+
     st.subheader("🤖 Модель ML")
     use_balanced_model = st.checkbox("Использовать балансировку классов", value=True)
     final_threshold = st.slider("Финальный порог для снятия (%)", 50, 90, 70, 5) / 100
+
+    st.divider()
+
+    # Кнопка очистки кеша
+    if st.button("🔄 Очистить кеш данных"):
+        st.session_state.loaded_data = None
+        st.cache_data.clear()
+        st.success("Кеш очищен!")
+        st.rerun()
 
 # === ЗАГРУЗКА ДАННЫХ ===
 st.header("📁 Загрузка данных")
 st.info("💡 Формат: дата, артикул, количество, магазин, название")
 
-uploaded_file = st.file_uploader("Выберите Excel файл", type=['xlsx', 'xls'])
+# Выбор источника данных
+data_source = st.radio(
+    "Выберите источник данных:",
+    ["Google Sheets", "Локальный файл"],
+    horizontal=True
+)
+
+uploaded_file = None
+sheets_url = None
+
+if data_source == "Локальный файл":
+    uploaded_file = st.file_uploader("Выберите Excel файл", type=['xlsx', 'xls'])
+else:
+    sheets_url = st.text_input(
+        "Ссылка на Google Sheets:",
+        value="https://docs.google.com/spreadsheets/d/1lJLON5N_EKQ5ICv0Pprp5DamP1tNAhBIph4uEoWC04Q/edit?gid=64159818#gid=64159818",
+        help="Таблица должна иметь публичный доступ"
+    )
+
+# === КЕШИРОВАННЫЕ ФУНКЦИИ ЗАГРУЗКИ ===
+@st.cache_data(show_spinner=False)
+def _fetch_google_sheets_data(sheets_url):
+    """Кешированная загрузка сырых данных из Google Sheets"""
+    import re
+    import time
+
+    # Извлекаем spreadsheet ID
+    spreadsheet_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', sheets_url)
+    if not spreadsheet_match:
+        raise ValueError("Неверный формат ссылки на Google Sheets")
+
+    spreadsheet_id = spreadsheet_match.group(1)
+
+    # Извлекаем GID (ID листа)
+    gid_match = re.search(r'[#&]gid=([0-9]+)', sheets_url)
+    gid = gid_match.group(1) if gid_match else '0'
+
+    # Формируем URL для экспорта в Excel формате
+    export_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=xlsx&gid={gid}"
+
+    # Загружаем данные с прогресс-баром
+    progress_bar = st.progress(0, text="🔄 Подключение к Google Sheets...")
+    time.sleep(0.3)
+    progress_bar.progress(20, text="📥 Загрузка данных...")
+
+    df = pd.read_excel(export_url, nrows=100000)
+
+    progress_bar.progress(80, text="✅ Обработка данных...")
+    time.sleep(0.2)
+    progress_bar.progress(100, text="✅ Загрузка завершена!")
+    time.sleep(0.3)
+    progress_bar.empty()
+
+    return df
+
+@st.cache_data(show_spinner=False)
+def _load_excel_file(file_bytes, sheet_name):
+    """Кешированная загрузка Excel файла"""
+    from io import BytesIO
+    import time
+
+    progress_bar = st.progress(0, text="📂 Открытие файла...")
+    time.sleep(0.2)
+    progress_bar.progress(30, text="📊 Чтение данных...")
+
+    df = pd.read_excel(BytesIO(file_bytes), sheet_name=sheet_name, nrows=100000)
+
+    progress_bar.progress(90, text="✅ Финализация...")
+    time.sleep(0.2)
+    progress_bar.progress(100, text="✅ Файл загружен!")
+    time.sleep(0.3)
+    progress_bar.empty()
+
+    return df
 
 def load_and_process_data(uploaded_file):
     if uploaded_file is None:
         st.info("👆 Загрузите Excel файл для начала работы")
         return None, False
-    
+
     try:
         file_size = len(uploaded_file.read())
         uploaded_file.seek(0)
-        
+
         if file_size > 50 * 1024 * 1024:
             st.error("❌ Файл слишком большой. Максимум: 50MB")
             return None, False
-        
+
+        # Определяем листы
+        file_bytes = uploaded_file.read()
+        uploaded_file.seek(0)
         excel_file = pd.ExcelFile(uploaded_file)
         selected_sheet = st.selectbox("Выберите лист:", excel_file.sheet_names) if len(excel_file.sheet_names) > 1 else excel_file.sheet_names[0]
-        
-        df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, nrows=100000)
+
+        # Используем кешированную загрузку
+        df = _load_excel_file(file_bytes, selected_sheet)
         if len(df) == 100000:
             st.warning("⚠️ Файл обрезан до 100,000 строк")
         
@@ -121,7 +212,100 @@ def load_and_process_data(uploaded_file):
         st.error(f"❌ Ошибка загрузки: {str(e)}")
         return None, False
 
-df, data_loaded = load_and_process_data(uploaded_file)
+def load_from_google_sheets(sheets_url):
+    """Загрузка данных из публичной Google Sheets таблицы"""
+    if not sheets_url or sheets_url.strip() == "":
+        st.info("👆 Введите ссылку на Google Sheets")
+        return None, False
+
+    try:
+        # Используем кешированную загрузку данных
+        df = _fetch_google_sheets_data(sheets_url)
+
+        if len(df) == 100000:
+            st.warning("⚠️ Файл обрезан до 100,000 строк")
+
+        st.success(f"✅ Загружено {len(df)} строк из Google Sheets")
+
+        # Сопоставление колонок (идентично load_and_process_data)
+        available_cols = list(df.columns)
+        col1, col2 = st.columns(2)
+
+        with col1:
+            date_col = st.selectbox("Дата:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['дат', 'date'])), 0), key="gs_date")
+            art_col = st.selectbox("Артикул:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['арт', 'art'])), 0), key="gs_art")
+            qty_col = st.selectbox("Количество:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['кол', 'qty', 'количество'])), 0), key="gs_qty")
+
+        with col2:
+            magazin_col = st.selectbox("Магазин:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['маг', 'magazin', 'магазин'])), 0), key="gs_magazin")
+            name_col = st.selectbox("Название:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['назв', 'name', 'название'])), 0), key="gs_name")
+            segment_col = st.selectbox("Сегмент (опционально):", ['Без сегментации'] + available_cols, key="gs_segment")
+
+        # Переименование колонок
+        column_mapping = {date_col: 'Data', art_col: 'Art', qty_col: 'Qty', magazin_col: 'Magazin', name_col: 'Name'}
+        if segment_col != 'Без сегментации':
+            column_mapping[segment_col] = 'Segment'
+
+        df = df.rename(columns=column_mapping)
+
+        # Проверка обязательных колонок
+        required_cols = ['Data', 'Art', 'Qty', 'Magazin', 'Name']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            st.error(f"❌ Отсутствуют колонки: {missing_cols}")
+            return None, False
+
+        # Фильтрация по сегменту
+        if 'Segment' in df.columns:
+            st.subheader("🎯 Выбор сегмента")
+            unique_segments = sorted(df['Segment'].dropna().unique())
+            selected_segment = st.selectbox("Сегмент:", ['Все сегменты'] + list(unique_segments), key="gs_segment_filter")
+
+            if selected_segment != 'Все сегменты':
+                df = df[df['Segment'] == selected_segment].copy()
+                st.success(f"✅ Выбран сегмент: {selected_segment}")
+
+        with st.expander("📊 Предварительный просмотр"):
+            st.dataframe(df.head())
+            col1, col2, col3 = st.columns(3)
+            with col1: st.metric("Записей", len(df))
+            with col2: st.metric("Артикулов", df['Art'].nunique())
+            with col3:
+                try:
+                    date_min = pd.to_datetime(df['Data'], errors='coerce').min()
+                    date_max = pd.to_datetime(df['Data'], errors='coerce').max()
+                    st.metric("Период", f"{date_min.strftime('%Y-%m-%d')} - {date_max.strftime('%Y-%m-%d')}")
+                except:
+                    st.metric("Период", "Ошибка дат")
+
+        return df, True
+
+    except Exception as e:
+        st.error(f"❌ Ошибка загрузки из Google Sheets: {str(e)}")
+        st.info("💡 Убедитесь, что таблица имеет публичный доступ")
+        return None, False
+
+# Загрузка данных в зависимости от выбранного источника с использованием session_state
+# Проверяем, изменился ли источник данных
+if st.session_state.data_source_type != data_source:
+    st.session_state.loaded_data = None  # Сбрасываем кеш при смене источника
+    st.session_state.data_source_type = data_source
+
+# Если данные уже загружены и источник не изменился, используем кешированные
+if st.session_state.loaded_data is not None:
+    df, data_loaded = st.session_state.loaded_data
+    if data_loaded:
+        st.info("ℹ️ Используются ранее загруженные данные")
+else:
+    # Загружаем новые данные
+    if data_source == "Локальный файл":
+        df, data_loaded = load_and_process_data(uploaded_file)
+    else:
+        df, data_loaded = load_from_google_sheets(sheets_url)
+
+    # Сохраняем в session_state
+    if data_loaded:
+        st.session_state.loaded_data = (df, data_loaded)
 
 if data_loaded:
     st.header("🚀 Запуск анализа")
@@ -359,17 +543,25 @@ def create_ml_model(features, abc_analysis):
             clf.fit(X_train, y_train)
             final_features['prob_dying'] = clf.predict_proba(X)[:, 1] * 100
             test_score = clf.score(X_test, y_test)
-            
+
+            # Сохраняем feature importance
+            feature_importance = pd.DataFrame({
+                'feature': feature_cols,
+                'importance': clf.feature_importances_
+            }).sort_values('importance', ascending=False)
+
         except Exception as e:
             st.warning(f"⚠️ Ошибка ML: {e}. Используем простую логику.")
             final_features['prob_dying'] = final_features['label'].astype(float) * 100
             test_score = 0.0
+            feature_importance = None
     else:
         st.warning("⚠️ Недостаточно данных для ML. Используем простую логику.")
         final_features['prob_dying'] = final_features['label'].astype(float) * 100
         test_score = 0.0
-    
-    return final_features, test_score
+        feature_importance = None
+
+    return final_features, test_score, feature_importance
 
 def create_prophet_forecasts(df, abc_analysis):
     if not PROPHET_AVAILABLE:
@@ -493,7 +685,7 @@ def get_recommendations(row):
 df, weekly, all_arts, unique_weeks = process_data(df)
 abc_analysis = calculate_abc_xyz_analysis(df)
 features = calculate_features(weekly, df)
-final_features, test_score = create_ml_model(features, abc_analysis)
+final_features, test_score, feature_importance = create_ml_model(features, abc_analysis)
 forecast_df = create_prophet_forecasts(df, abc_analysis)
 
 # Финальная таблица
@@ -614,3 +806,133 @@ with st.expander("ℹ️ Информация"):
     st.write(f"**Статус:** Prophet {'✅' if PROPHET_AVAILABLE else '❌'}, Обработано: {len(final)}")
     if not PROPHET_AVAILABLE:
         st.warning("⚠️ Установите Prophet: pip install prophet")
+
+# === РЕКОМЕНДАЦИИ ML/DS ИНЖЕНЕРА ===
+st.header("🎓 Рекомендации Data Scientist")
+
+with st.expander("📊 Feature Importance - Важность признаков модели", expanded=True):
+    if feature_importance is not None:
+        st.write("**Влияние признаков на решение модели:**")
+
+        # Визуализация важности признаков
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            # Используем st.bar_chart для простой визуализации
+            chart_data = feature_importance.set_index('feature')['importance']
+            st.bar_chart(chart_data)
+
+        with col2:
+            st.write("**Топ-5 признаков:**")
+            for idx, row in feature_importance.head(5).iterrows():
+                importance_pct = row['importance'] * 100
+                st.metric(
+                    label=row['feature'],
+                    value=f"{importance_pct:.1f}%"
+                )
+
+        st.divider()
+        st.write("**Интерпретация:**")
+
+        # Анализ топового признака
+        top_feature = feature_importance.iloc[0]['feature']
+        top_importance = feature_importance.iloc[0]['importance'] * 100
+
+        if top_feature == 'consecutive_zeros':
+            st.info(f"🔍 **Последовательные недели без продаж** - наиболее важный фактор ({top_importance:.1f}%). Товары с длительным отсутствием продаж имеют высокую вероятность снятия.")
+        elif top_feature == 'no_store_ratio':
+            st.info(f"🔍 **Доля магазинов без продаж** - ключевой индикатор ({top_importance:.1f}%). Низкое распространение товара критично для решений.")
+        elif top_feature == 'total_qty':
+            st.info(f"🔍 **Общий объём продаж** - главный фактор ({top_importance:.1f}%). Товары с низким оборотом попадают под снятие.")
+
+    else:
+        st.warning("⚠️ Feature importance недоступна - модель не обучена")
+
+with st.expander("💡 Ключевые инсайты и рекомендации", expanded=True):
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("📌 Основные находки")
+
+        # Анализ по категориям
+        c_category_remove = len(final[(final['abc_category'] == 'C') & (final['Рекомендация'] == '🚫 Снять')])
+        b_category_remove = len(final[(final['abc_category'] == 'B') & (final['Рекомендация'] == '🚫 Снять')])
+        a_category_remove = len(final[(final['abc_category'] == 'A') & (final['Рекомендация'] == '🚫 Снять')])
+
+        st.write(f"""
+        **Распределение решений по ABC:**
+        - Категория C: {c_category_remove} к снятию ({c_category_remove/len(final[final['abc_category']=='C'])*100:.1f}%)
+        - Категория B: {b_category_remove} к снятию ({b_category_remove/len(final[final['abc_category']=='B'])*100 if len(final[final['abc_category']=='B'])>0 else 0:.1f}%)
+        - Категория A: {a_category_remove} к снятию ({a_category_remove/len(final[final['abc_category']=='A'])*100 if len(final[final['abc_category']=='A'])>0 else 0:.1f}%)
+        """)
+
+        # Средние метрики
+        avg_zero_weeks_remove = final[final['Рекомендация'] == '🚫 Снять']['consecutive_zeros'].mean()
+        avg_zero_weeks_keep = final[final['Рекомендация'] == '✅ Оставить']['consecutive_zeros'].mean()
+
+        st.write(f"""
+        **Средние показатели:**
+        - Среднее недель без продаж (снять): {avg_zero_weeks_remove:.1f}
+        - Среднее недель без продаж (оставить): {avg_zero_weeks_keep:.1f}
+        - Разница: **{avg_zero_weeks_remove - avg_zero_weeks_keep:.1f}x**
+        """)
+
+    with col2:
+        st.subheader("🎯 Рекомендации")
+
+        st.write("""
+        **1. Приоритизация снятия:**
+        - Начните с категории C с высокой `consecutive_zeros`
+        - Товары с `no_store_ratio > 85%` - первая волна
+        - Проверьте Prophet прогнозы для топ-товаров
+
+        **2. Товары "Наблюдать":**
+        - Установите автомониторинг на 4-6 недель
+        - Проведите A/B тест скидок перед снятием
+        - Проверьте сезонность продаж
+
+        **3. Улучшение модели:**
+        - Добавьте сезонные признаки (месяц, квартал)
+        - Учитывайте ценовую историю
+        - Интегрируйте данные о маркетинговых акциях
+
+        **4. Бизнес-процессы:**
+        - Автоматизируйте еженедельный мониторинг
+        - Создайте дашборд для отслеживания метрик
+        - Внедрите систему алертов для критичных товаров
+        """)
+
+with st.expander("🔬 Метрики качества модели", expanded=False):
+    st.write(f"""
+    **Статистика модели:**
+    - Точность на тестовой выборке: **{test_score:.2%}** {'✅' if test_score > 0.7 else '⚠️' if test_score > 0.5 else '❌'}
+    - Всего обработано товаров: **{len(final)}**
+    - Положительных меток (к снятию): **{candidates_remove}** ({candidates_remove/total_products*100:.1f}%)
+    - Порог модели: **{final_threshold*100:.0f}%**
+    """)
+
+    if test_score > 0:
+        if test_score > 0.8:
+            st.success("✅ Отличная точность модели! Рекомендации можно применять с высокой уверенностью.")
+        elif test_score > 0.65:
+            st.info("ℹ️ Хорошая точность. Рекомендуется дополнительная валидация критичных решений.")
+        else:
+            st.warning("⚠️ Умеренная точность. Используйте модель как вспомогательный инструмент, не единственный критерий.")
+
+    st.write("""
+    **Методология:**
+    - Алгоритм: Random Forest Classifier (30 деревьев)
+    - Балансировка классов: {'Включена' if use_balanced_model else 'Выключена'}
+    - Валидация: Train/Test Split (70/30)
+    - Признаки: Временные ряды, ABC/XYZ, распределение по магазинам
+    """)
+
+    if feature_importance is not None:
+        st.write("**Все признаки модели:**")
+        st.dataframe(
+            feature_importance.style.format({'importance': '{:.2%}'}),
+            use_container_width=True
+        )
+
+st.divider()
+st.caption("🤖 Отчёт сгенерирован ML-системой анализа товарного портфеля | Data Science & ML Engineering")
