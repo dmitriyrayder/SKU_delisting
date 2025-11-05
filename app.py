@@ -17,8 +17,13 @@ from io import BytesIO
 
 st.set_page_config(page_title="Анализ товаров", layout="wide")
 
+# Инициализация session_state
 if 'run_analysis' not in st.session_state:
     st.session_state.run_analysis = False
+if 'loaded_data' not in st.session_state:
+    st.session_state.loaded_data = None
+if 'data_source_type' not in st.session_state:
+    st.session_state.data_source_type = None
 
 st.title("🔍 Анализ товаров: определение кандидатов на снятие")
 
@@ -26,15 +31,24 @@ st.title("🔍 Анализ товаров: определение кандид�
 with st.sidebar:
     st.header("⚙️ Настройки")
     TOP_N = st.slider("Количество топ-артикулов для Prophet", 10, 50, 20)
-    
+
     st.subheader("🎯 Критерии снятия")
     zero_weeks_threshold = st.slider("Недель подряд без продаж", 8, 20, 12)
     min_total_sales = st.slider("Минимальный объем продаж", 1, 50, 5)
     max_store_ratio = st.slider("Макс. доля магазинов без продаж (%)", 70, 95, 85, 5) / 100
-    
+
     st.subheader("🤖 Модель ML")
     use_balanced_model = st.checkbox("Использовать балансировку классов", value=True)
     final_threshold = st.slider("Финальный порог для снятия (%)", 50, 90, 70, 5) / 100
+
+    st.divider()
+
+    # Кнопка очистки кеша
+    if st.button("🔄 Очистить кеш данных"):
+        st.session_state.loaded_data = None
+        st.cache_data.clear()
+        st.success("Кеш очищен!")
+        st.rerun()
 
 # === ЗАГРУЗКА ДАННЫХ ===
 st.header("📁 Загрузка данных")
@@ -59,23 +73,58 @@ else:
         help="Таблица должна иметь публичный доступ"
     )
 
+# === КЕШИРОВАННЫЕ ФУНКЦИИ ЗАГРУЗКИ ===
+@st.cache_data(show_spinner="🔄 Загрузка данных из Google Sheets...")
+def _fetch_google_sheets_data(sheets_url):
+    """Кешированная загрузка сырых данных из Google Sheets"""
+    import re
+
+    # Извлекаем spreadsheet ID
+    spreadsheet_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', sheets_url)
+    if not spreadsheet_match:
+        raise ValueError("Неверный формат ссылки на Google Sheets")
+
+    spreadsheet_id = spreadsheet_match.group(1)
+
+    # Извлекаем GID (ID листа)
+    gid_match = re.search(r'[#&]gid=([0-9]+)', sheets_url)
+    gid = gid_match.group(1) if gid_match else '0'
+
+    # Формируем URL для экспорта в Excel формате
+    export_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=xlsx&gid={gid}"
+
+    # Загружаем данные
+    df = pd.read_excel(export_url, nrows=100000)
+    return df
+
+@st.cache_data(show_spinner="🔄 Загрузка файла...")
+def _load_excel_file(file_bytes, sheet_name):
+    """Кешированная загрузка Excel файла"""
+    from io import BytesIO
+    df = pd.read_excel(BytesIO(file_bytes), sheet_name=sheet_name, nrows=100000)
+    return df
+
 def load_and_process_data(uploaded_file):
     if uploaded_file is None:
         st.info("👆 Загрузите Excel файл для начала работы")
         return None, False
-    
+
     try:
         file_size = len(uploaded_file.read())
         uploaded_file.seek(0)
-        
+
         if file_size > 50 * 1024 * 1024:
             st.error("❌ Файл слишком большой. Максимум: 50MB")
             return None, False
-        
+
+        # Определяем листы
+        file_bytes = uploaded_file.read()
+        uploaded_file.seek(0)
         excel_file = pd.ExcelFile(uploaded_file)
         selected_sheet = st.selectbox("Выберите лист:", excel_file.sheet_names) if len(excel_file.sheet_names) > 1 else excel_file.sheet_names[0]
-        
-        df = pd.read_excel(uploaded_file, sheet_name=selected_sheet, nrows=100000)
+
+        # Используем кешированную загрузку
+        df = _load_excel_file(file_bytes, selected_sheet)
         if len(df) == 100000:
             st.warning("⚠️ Файл обрезан до 100,000 строк")
         
@@ -145,96 +194,93 @@ def load_from_google_sheets(sheets_url):
         return None, False
 
     try:
-        # Извлечение ID таблицы и GID листа
-        import re
+        # Используем кешированную загрузку данных
+        df = _fetch_google_sheets_data(sheets_url)
 
-        # Извлекаем spreadsheet ID
-        spreadsheet_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', sheets_url)
-        if not spreadsheet_match:
-            st.error("❌ Неверный формат ссылки на Google Sheets")
+        if len(df) == 100000:
+            st.warning("⚠️ Файл обрезан до 100,000 строк")
+
+        st.success(f"✅ Загружено {len(df)} строк из Google Sheets")
+
+        # Сопоставление колонок (идентично load_and_process_data)
+        available_cols = list(df.columns)
+        col1, col2 = st.columns(2)
+
+        with col1:
+            date_col = st.selectbox("Дата:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['дат', 'date'])), 0), key="gs_date")
+            art_col = st.selectbox("Артикул:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['арт', 'art'])), 0), key="gs_art")
+            qty_col = st.selectbox("Количество:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['кол', 'qty', 'количество'])), 0), key="gs_qty")
+
+        with col2:
+            magazin_col = st.selectbox("Магазин:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['маг', 'magazin', 'магазин'])), 0), key="gs_magazin")
+            name_col = st.selectbox("Название:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['назв', 'name', 'название'])), 0), key="gs_name")
+            segment_col = st.selectbox("Сегмент (опционально):", ['Без сегментации'] + available_cols, key="gs_segment")
+
+        # Переименование колонок
+        column_mapping = {date_col: 'Data', art_col: 'Art', qty_col: 'Qty', magazin_col: 'Magazin', name_col: 'Name'}
+        if segment_col != 'Без сегментации':
+            column_mapping[segment_col] = 'Segment'
+
+        df = df.rename(columns=column_mapping)
+
+        # Проверка обязательных колонок
+        required_cols = ['Data', 'Art', 'Qty', 'Magazin', 'Name']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            st.error(f"❌ Отсутствуют колонки: {missing_cols}")
             return None, False
 
-        spreadsheet_id = spreadsheet_match.group(1)
+        # Фильтрация по сегменту
+        if 'Segment' in df.columns:
+            st.subheader("🎯 Выбор сегмента")
+            unique_segments = sorted(df['Segment'].dropna().unique())
+            selected_segment = st.selectbox("Сегмент:", ['Все сегменты'] + list(unique_segments), key="gs_segment_filter")
 
-        # Извлекаем GID (ID листа)
-        gid_match = re.search(r'[#&]gid=([0-9]+)', sheets_url)
-        gid = gid_match.group(1) if gid_match else '0'
+            if selected_segment != 'Все сегменты':
+                df = df[df['Segment'] == selected_segment].copy()
+                st.success(f"✅ Выбран сегмент: {selected_segment}")
 
-        # Формируем URL для экспорта в Excel формате
-        export_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=xlsx&gid={gid}"
+        with st.expander("📊 Предварительный просмотр"):
+            st.dataframe(df.head())
+            col1, col2, col3 = st.columns(3)
+            with col1: st.metric("Записей", len(df))
+            with col2: st.metric("Артикулов", df['Art'].nunique())
+            with col3:
+                try:
+                    date_min = pd.to_datetime(df['Data'], errors='coerce').min()
+                    date_max = pd.to_datetime(df['Data'], errors='coerce').max()
+                    st.metric("Период", f"{date_min.strftime('%Y-%m-%d')} - {date_max.strftime('%Y-%m-%d')}")
+                except:
+                    st.metric("Период", "Ошибка дат")
 
-        with st.spinner("🔄 Загрузка данных из Google Sheets..."):
-            # Загружаем данные
-            df = pd.read_excel(export_url, nrows=100000)
-
-            if len(df) == 100000:
-                st.warning("⚠️ Файл обрезан до 100,000 строк")
-
-            st.success(f"✅ Загружено {len(df)} строк из Google Sheets")
-
-            # Сопоставление колонок (идентично load_and_process_data)
-            available_cols = list(df.columns)
-            col1, col2 = st.columns(2)
-
-            with col1:
-                date_col = st.selectbox("Дата:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['дат', 'date'])), 0), key="gs_date")
-                art_col = st.selectbox("Артикул:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['арт', 'art'])), 0), key="gs_art")
-                qty_col = st.selectbox("Количество:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['кол', 'qty', 'количество'])), 0), key="gs_qty")
-
-            with col2:
-                magazin_col = st.selectbox("Магазин:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['маг', 'magazin', 'магазин'])), 0), key="gs_magazin")
-                name_col = st.selectbox("Название:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['назв', 'name', 'название'])), 0), key="gs_name")
-                segment_col = st.selectbox("Сегмент (опционально):", ['Без сегментации'] + available_cols, key="gs_segment")
-
-            # Переименование колонок
-            column_mapping = {date_col: 'Data', art_col: 'Art', qty_col: 'Qty', magazin_col: 'Magazin', name_col: 'Name'}
-            if segment_col != 'Без сегментации':
-                column_mapping[segment_col] = 'Segment'
-
-            df = df.rename(columns=column_mapping)
-
-            # Проверка обязательных колонок
-            required_cols = ['Data', 'Art', 'Qty', 'Magazin', 'Name']
-            missing_cols = [col for col in required_cols if col not in df.columns]
-            if missing_cols:
-                st.error(f"❌ Отсутствуют колонки: {missing_cols}")
-                return None, False
-
-            # Фильтрация по сегменту
-            if 'Segment' in df.columns:
-                st.subheader("🎯 Выбор сегмента")
-                unique_segments = sorted(df['Segment'].dropna().unique())
-                selected_segment = st.selectbox("Сегмент:", ['Все сегменты'] + list(unique_segments), key="gs_segment_filter")
-
-                if selected_segment != 'Все сегменты':
-                    df = df[df['Segment'] == selected_segment].copy()
-                    st.success(f"✅ Выбран сегмент: {selected_segment}")
-
-            with st.expander("📊 Предварительный просмотр"):
-                st.dataframe(df.head())
-                col1, col2, col3 = st.columns(3)
-                with col1: st.metric("Записей", len(df))
-                with col2: st.metric("Артикулов", df['Art'].nunique())
-                with col3:
-                    try:
-                        date_min = pd.to_datetime(df['Data'], errors='coerce').min()
-                        date_max = pd.to_datetime(df['Data'], errors='coerce').max()
-                        st.metric("Период", f"{date_min.strftime('%Y-%m-%d')} - {date_max.strftime('%Y-%m-%d')}")
-                    except:
-                        st.metric("Период", "Ошибка дат")
-
-            return df, True
+        return df, True
 
     except Exception as e:
         st.error(f"❌ Ошибка загрузки из Google Sheets: {str(e)}")
         st.info("💡 Убедитесь, что таблица имеет публичный доступ")
         return None, False
 
-# Загрузка данных в зависимости от выбранного источника
-if data_source == "Локальный файл":
-    df, data_loaded = load_and_process_data(uploaded_file)
+# Загрузка данных в зависимости от выбранного источника с использованием session_state
+# Проверяем, изменился ли источник данных
+if st.session_state.data_source_type != data_source:
+    st.session_state.loaded_data = None  # Сбрасываем кеш при смене источника
+    st.session_state.data_source_type = data_source
+
+# Если данные уже загружены и источник не изменился, используем кешированные
+if st.session_state.loaded_data is not None:
+    df, data_loaded = st.session_state.loaded_data
+    if data_loaded:
+        st.info("ℹ️ Используются ранее загруженные данные")
 else:
-    df, data_loaded = load_from_google_sheets(sheets_url)
+    # Загружаем новые данные
+    if data_source == "Локальный файл":
+        df, data_loaded = load_and_process_data(uploaded_file)
+    else:
+        df, data_loaded = load_from_google_sheets(sheets_url)
+
+    # Сохраняем в session_state
+    if data_loaded:
+        st.session_state.loaded_data = (df, data_loaded)
 
 if data_loaded:
     st.header("🚀 Запуск анализа")
