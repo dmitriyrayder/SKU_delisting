@@ -40,7 +40,24 @@ with st.sidebar:
 st.header("📁 Загрузка данных")
 st.info("💡 Формат: дата, артикул, количество, магазин, название")
 
-uploaded_file = st.file_uploader("Выберите Excel файл", type=['xlsx', 'xls'])
+# Выбор источника данных
+data_source = st.radio(
+    "Выберите источник данных:",
+    ["Google Sheets", "Локальный файл"],
+    horizontal=True
+)
+
+uploaded_file = None
+sheets_url = None
+
+if data_source == "Локальный файл":
+    uploaded_file = st.file_uploader("Выберите Excel файл", type=['xlsx', 'xls'])
+else:
+    sheets_url = st.text_input(
+        "Ссылка на Google Sheets:",
+        value="https://docs.google.com/spreadsheets/d/1lJLON5N_EKQ5ICv0Pprp5DamP1tNAhBIph4uEoWC04Q/edit?gid=64159818#gid=64159818",
+        help="Таблица должна иметь публичный доступ"
+    )
 
 def load_and_process_data(uploaded_file):
     if uploaded_file is None:
@@ -121,7 +138,103 @@ def load_and_process_data(uploaded_file):
         st.error(f"❌ Ошибка загрузки: {str(e)}")
         return None, False
 
-df, data_loaded = load_and_process_data(uploaded_file)
+def load_from_google_sheets(sheets_url):
+    """Загрузка данных из публичной Google Sheets таблицы"""
+    if not sheets_url or sheets_url.strip() == "":
+        st.info("👆 Введите ссылку на Google Sheets")
+        return None, False
+
+    try:
+        # Извлечение ID таблицы и GID листа
+        import re
+
+        # Извлекаем spreadsheet ID
+        spreadsheet_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', sheets_url)
+        if not spreadsheet_match:
+            st.error("❌ Неверный формат ссылки на Google Sheets")
+            return None, False
+
+        spreadsheet_id = spreadsheet_match.group(1)
+
+        # Извлекаем GID (ID листа)
+        gid_match = re.search(r'[#&]gid=([0-9]+)', sheets_url)
+        gid = gid_match.group(1) if gid_match else '0'
+
+        # Формируем URL для экспорта в Excel формате
+        export_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=xlsx&gid={gid}"
+
+        with st.spinner("🔄 Загрузка данных из Google Sheets..."):
+            # Загружаем данные
+            df = pd.read_excel(export_url, nrows=100000)
+
+            if len(df) == 100000:
+                st.warning("⚠️ Файл обрезан до 100,000 строк")
+
+            st.success(f"✅ Загружено {len(df)} строк из Google Sheets")
+
+            # Сопоставление колонок (идентично load_and_process_data)
+            available_cols = list(df.columns)
+            col1, col2 = st.columns(2)
+
+            with col1:
+                date_col = st.selectbox("Дата:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['дат', 'date'])), 0), key="gs_date")
+                art_col = st.selectbox("Артикул:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['арт', 'art'])), 0), key="gs_art")
+                qty_col = st.selectbox("Количество:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['кол', 'qty', 'количество'])), 0), key="gs_qty")
+
+            with col2:
+                magazin_col = st.selectbox("Магазин:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['маг', 'magazin', 'магазин'])), 0), key="gs_magazin")
+                name_col = st.selectbox("Название:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['назв', 'name', 'название'])), 0), key="gs_name")
+                segment_col = st.selectbox("Сегмент (опционально):", ['Без сегментации'] + available_cols, key="gs_segment")
+
+            # Переименование колонок
+            column_mapping = {date_col: 'Data', art_col: 'Art', qty_col: 'Qty', magazin_col: 'Magazin', name_col: 'Name'}
+            if segment_col != 'Без сегментации':
+                column_mapping[segment_col] = 'Segment'
+
+            df = df.rename(columns=column_mapping)
+
+            # Проверка обязательных колонок
+            required_cols = ['Data', 'Art', 'Qty', 'Magazin', 'Name']
+            missing_cols = [col for col in required_cols if col not in df.columns]
+            if missing_cols:
+                st.error(f"❌ Отсутствуют колонки: {missing_cols}")
+                return None, False
+
+            # Фильтрация по сегменту
+            if 'Segment' in df.columns:
+                st.subheader("🎯 Выбор сегмента")
+                unique_segments = sorted(df['Segment'].dropna().unique())
+                selected_segment = st.selectbox("Сегмент:", ['Все сегменты'] + list(unique_segments), key="gs_segment_filter")
+
+                if selected_segment != 'Все сегменты':
+                    df = df[df['Segment'] == selected_segment].copy()
+                    st.success(f"✅ Выбран сегмент: {selected_segment}")
+
+            with st.expander("📊 Предварительный просмотр"):
+                st.dataframe(df.head())
+                col1, col2, col3 = st.columns(3)
+                with col1: st.metric("Записей", len(df))
+                with col2: st.metric("Артикулов", df['Art'].nunique())
+                with col3:
+                    try:
+                        date_min = pd.to_datetime(df['Data'], errors='coerce').min()
+                        date_max = pd.to_datetime(df['Data'], errors='coerce').max()
+                        st.metric("Период", f"{date_min.strftime('%Y-%m-%d')} - {date_max.strftime('%Y-%m-%d')}")
+                    except:
+                        st.metric("Период", "Ошибка дат")
+
+            return df, True
+
+    except Exception as e:
+        st.error(f"❌ Ошибка загрузки из Google Sheets: {str(e)}")
+        st.info("💡 Убедитесь, что таблица имеет публичный доступ")
+        return None, False
+
+# Загрузка данных в зависимости от выбранного источника
+if data_source == "Локальный файл":
+    df, data_loaded = load_and_process_data(uploaded_file)
+else:
+    df, data_loaded = load_from_google_sheets(sheets_url)
 
 if data_loaded:
     st.header("🚀 Запуск анализа")
