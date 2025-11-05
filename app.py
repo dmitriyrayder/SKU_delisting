@@ -359,11 +359,17 @@ def calculate_abc_xyz_analysis(df):
     abc_analysis.columns = ['Art', 'total_qty', 'avg_qty', 'std_qty', 'first_sale', 'last_sale']
     abc_analysis['days_in_catalog'] = (abc_analysis['last_sale'] - abc_analysis['first_sale']).dt.days + 1
     
-    # ABC категории (исправлено: сортировка перед кумулятивным расчетом)
+    # ABC категории - ИСПРАВЛЕНО: сортировка перед кумулятивным расчетом
     abc_analysis = abc_analysis.sort_values('total_qty', ascending=False).reset_index(drop=True)
-    abc_analysis['cum_qty'] = abc_analysis['total_qty'].cumsum()
     total_sum = abc_analysis['total_qty'].sum()
-    abc_analysis['cum_qty_pct'] = abc_analysis['cum_qty'] / total_sum if total_sum > 0 else 0
+    
+    # ИСПРАВЛЕНО: защита от деления на ноль
+    if total_sum > 0:
+        abc_analysis['cum_qty'] = abc_analysis['total_qty'].cumsum()
+        abc_analysis['cum_qty_pct'] = abc_analysis['cum_qty'] / total_sum
+    else:
+        abc_analysis['cum_qty'] = 0
+        abc_analysis['cum_qty_pct'] = 0
     
     def get_abc_category(cum_pct):
         if cum_pct <= 0.8: return 'A'
@@ -372,7 +378,7 @@ def calculate_abc_xyz_analysis(df):
     
     abc_analysis['abc_category'] = abc_analysis['cum_qty_pct'].apply(get_abc_category)
     
-    # XYZ анализ (исправлено: обработка нулевых значений)
+    # XYZ анализ - ИСПРАВЛЕНО: обработка нулевых значений
     abc_analysis['coefficient_variation'] = np.where(
         abc_analysis['avg_qty'] > 0,
         abc_analysis['std_qty'] / abc_analysis['avg_qty'],
@@ -457,7 +463,7 @@ def calculate_features(weekly, df):
     return features
 
 def create_ml_model(features, abc_analysis):
-    # Создание меток для обучения (ИСПРАВЛЕННАЯ ЛОГИКА)
+    # Создание меток для обучения
     def create_labels(row):
         score = 0
         
@@ -477,17 +483,17 @@ def create_ml_model(features, abc_analysis):
             if row['trend'] < -0.1: 
                 score += 1
         
-        # Категория B - умеренные критерии (ИСПРАВЛЕНО)
+        # Категория B - умеренные критерии
         elif row['abc_category'] == 'B':
-            if row['consecutive_zeros'] >= zero_weeks_threshold * 2:  # 24 недели
+            if row['consecutive_zeros'] >= zero_weeks_threshold * 2:
                 score += 3
-            elif row['consecutive_zeros'] >= zero_weeks_threshold:  # 12 недель
+            elif row['consecutive_zeros'] >= zero_weeks_threshold:
                 score += 2
             
-            if row['no_store_ratio'] > max_store_ratio:  # 85%
+            if row['no_store_ratio'] > max_store_ratio:
                 score += 2
             
-            if row['total_qty'] < min_total_sales * 2:  # 10 единиц
+            if row['total_qty'] < min_total_sales * 2:
                 score += 1
             
             if row['trend'] < -0.1:
@@ -495,14 +501,14 @@ def create_ml_model(features, abc_analysis):
         
         # Категория A - только критичные случаи
         elif row['abc_category'] == 'A':
-            if row['consecutive_zeros'] >= zero_weeks_threshold * 3:  # 36 недель
+            if row['consecutive_zeros'] >= zero_weeks_threshold * 3:
                 score += 2
-            if row['no_store_ratio'] > 0.95:  # 95%
+            if row['no_store_ratio'] > 0.95:
                 score += 1
         
         # Критичные случаи для ЛЮБОЙ категории
         if row['consecutive_zeros'] >= zero_weeks_threshold * 2 and row['no_store_ratio'] > max_store_ratio:
-            score += 2  # Усиление для комбинации факторов
+            score += 2
         
         return 1 if score >= 4 else 0
     
@@ -521,8 +527,8 @@ def create_ml_model(features, abc_analysis):
     
     st.write(f"**Распределение:** Снять: {y.sum()}, Оставить: {len(y) - y.sum()}")
     
-    # Проверка возможности обучения
-    if len(y.unique()) > 1 and y.sum() >= 2:
+    # Проверка возможности обучения - ИСПРАВЛЕНО
+    if len(y.unique()) > 1 and y.sum() >= 2 and len(y) - y.sum() >= 2:
         try:
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y, 
@@ -544,24 +550,16 @@ def create_ml_model(features, abc_analysis):
             final_features['prob_dying'] = clf.predict_proba(X)[:, 1] * 100
             test_score = clf.score(X_test, y_test)
 
-            # Сохраняем feature importance
-            feature_importance = pd.DataFrame({
-                'feature': feature_cols,
-                'importance': clf.feature_importances_
-            }).sort_values('importance', ascending=False)
-
         except Exception as e:
             st.warning(f"⚠️ Ошибка ML: {e}. Используем простую логику.")
             final_features['prob_dying'] = final_features['label'].astype(float) * 100
             test_score = 0.0
-            feature_importance = None
     else:
         st.warning("⚠️ Недостаточно данных для ML. Используем простую логику.")
         final_features['prob_dying'] = final_features['label'].astype(float) * 100
         test_score = 0.0
-        feature_importance = None
 
-    return final_features, test_score, feature_importance
+    return final_features, test_score
 
 def create_prophet_forecasts(df, abc_analysis):
     if not PROPHET_AVAILABLE:
@@ -596,7 +594,7 @@ def create_prophet_forecasts(df, abc_analysis):
                     median_30 = max(0, forecast.tail(30)['yhat'].median())
                     forecasts.append({'Art': art, 'forecast_30_median': float(median_30)})
                     
-                except Exception as e:
+                except Exception:
                     continue
             
             return pd.DataFrame(forecasts)
@@ -615,21 +613,19 @@ def get_recommendations(row):
         reasons.append("Категория B")
     
     if row['consecutive_zeros'] >= zero_weeks_threshold * 2:
-        reasons.append(f"Без продаж {int(row['consecutive_zeros'])} недель (критично!)")
+        reasons.append(f"Без продаж {int(row['consecutive_zeros'])} нед.")
     elif row['consecutive_zeros'] >= zero_weeks_threshold: 
-        reasons.append(f"Без продаж {int(row['consecutive_zeros'])} недель")
+        reasons.append(f"Без продаж {int(row['consecutive_zeros'])} нед.")
     
     if row['zero_weeks_12'] >= zero_weeks_threshold // 2: 
-        reasons.append(f"Из 12 недель {int(row['zero_weeks_12'])} без продаж")
+        reasons.append(f"{int(row['zero_weeks_12'])}/12 нед. без продаж")
     
     if row['no_store_ratio'] > max_store_ratio: 
-        stores_with_sales_pct = (1 - row['no_store_ratio']) * 100
-        reasons.append(f"Продажи в {stores_with_sales_pct:.0f}% магазинов")
+        stores_pct = (1 - row['no_store_ratio']) * 100
+        reasons.append(f"Продажи в {stores_pct:.0f}% маг.")
     
     if row['total_qty'] < min_total_sales: 
         reasons.append(f"Малый объем ({row['total_qty']:.1f})")
-    elif row['total_qty'] < min_total_sales * 2:
-        reasons.append(f"Низкий объем ({row['total_qty']:.1f})")
     
     if row['trend'] < -0.1: 
         reasons.append("Негативный тренд")
@@ -637,46 +633,26 @@ def get_recommendations(row):
     # Добавляем дату последней продажи
     if pd.notnull(row.get('last_sale')):
         last_sale_str = row['last_sale'].strftime('%Y-%m-%d')
-        reasons.append(f"Последняя продажа: {last_sale_str}")
+        reasons.append(f"Последняя: {last_sale_str}")
     
     reason = "; ".join(reasons) if reasons else "Стабильные продажи"
     
-    # КРИТИЧНЫЕ СЛУЧАИ - переопределение независимо от ML
-    # 1. Экстремально долгое отсутствие продаж
-    if row['consecutive_zeros'] >= zero_weeks_threshold * 3:  # 36 недель
+    # КРИТИЧНЫЕ СЛУЧАИ
+    if row['consecutive_zeros'] >= zero_weeks_threshold * 3:
         return reason, "🚫 Снять"
     
-    # 2. Категория C с превышением всех порогов
     if (row['abc_category'] == 'C' and 
         row['consecutive_zeros'] >= zero_weeks_threshold and 
         row['total_qty'] < min_total_sales and
         row['no_store_ratio'] > max_store_ratio):
         return reason, "🚫 Снять"
     
-    # 3. Категория B с критическими показателями
-    if (row['abc_category'] == 'B' and 
-        row['consecutive_zeros'] >= zero_weeks_threshold * 2 and 
-        row['no_store_ratio'] > max_store_ratio):
-        return reason, "🚫 Снять"
-    
-    # 4. Долгое отсутствие + низкое распространение для B
-    if (row['abc_category'] == 'B' and
-        row['consecutive_zeros'] >= zero_weeks_threshold * 1.5 and
-        row['no_store_ratio'] > 0.85 and
-        row['total_qty'] < min_total_sales * 2):
-        return reason, "⚠️ Наблюдать"
-    
-    # Стандартная логика на основе ML
+    # Стандартная логика
     prob_threshold_pct = final_threshold * 100
     
     if row['prob_dying'] > prob_threshold_pct:
         return reason, "🚫 Снять"
     elif row['prob_dying'] > prob_threshold_pct * 0.7:
-        return reason, "⚠️ Наблюдать"
-    
-    # Дополнительные проверки для "Наблюдать"
-    if (row['consecutive_zeros'] >= zero_weeks_threshold and 
-        row['no_store_ratio'] > 0.75):
         return reason, "⚠️ Наблюдать"
     
     return reason, "✅ Оставить"
@@ -685,14 +661,19 @@ def get_recommendations(row):
 df, weekly, all_arts, unique_weeks = process_data(df)
 abc_analysis = calculate_abc_xyz_analysis(df)
 features = calculate_features(weekly, df)
-final_features, test_score, feature_importance = create_ml_model(features, abc_analysis)
+final_features, test_score = create_ml_model(features, abc_analysis)
 forecast_df = create_prophet_forecasts(df, abc_analysis)
 
 # Финальная таблица
 final = final_features.merge(abc_analysis[['Art', 'xyz_category', 'last_sale']], on='Art', how='left')
+
+# ИСПРАВЛЕНО: проверка перед мержем forecast_df
 if not forecast_df.empty:
     final = final.merge(forecast_df, on='Art', how='left')
+
+# ИСПРАВЛЕНО: обработка пустых Name
 final = final.merge(df[['Art', 'Name']].drop_duplicates(), on='Art', how='left')
+final['Name'] = final['Name'].fillna('Без названия')
 
 # Получение рекомендаций
 recommendations = final.apply(get_recommendations, axis=1)
@@ -705,6 +686,7 @@ st.header("📊 Результаты анализа")
 total_products = len(final)
 candidates_remove = len(final[final['Рекомендация'] == "🚫 Снять"])
 candidates_watch = len(final[final['Рекомендация'] == "⚠️ Наблюдать"])
+candidates_keep = len(final[final['Рекомендация'] == "✅ Оставить"])
 
 col1, col2, col3, col4 = st.columns(4)
 with col1: st.metric("Всего товаров", total_products)
@@ -724,6 +706,95 @@ with col1:
 with col2:
     st.write("**XYZ категории:**")
     st.write(f"X: {xyz_dist.get('X', 0)}, Y: {xyz_dist.get('Y', 0)}, Z: {xyz_dist.get('Z', 0)}")
+
+# === НОВЫЙ РАЗДЕЛ: СТАТИСТИКА ДЛЯ ПРОДАЖ И МАРКЕТИНГА ===
+st.header("📈 Аналитика для отдела продаж и маркетинга")
+
+# Расчёт дополнительных метрик
+total_sales_volume = final['total_qty'].sum()
+remove_sales_volume = final[final['Рекомендация'] == "🚫 Снять"]['total_qty'].sum()
+watch_sales_volume = final[final['Рекомендация'] == "⚠️ Наблюдать"]['total_qty'].sum()
+keep_sales_volume = final[final['Рекомендация'] == "✅ Оставить"]['total_qty'].sum()
+
+# 1. Сводная таблица по рекомендациям и ABC
+st.subheader("📊 Сводная таблица: Рекомендации × ABC категории")
+
+summary_pivot = pd.crosstab(
+    final['Рекомендация'], 
+    final['abc_category'], 
+    values=final['total_qty'], 
+    aggfunc='sum',
+    margins=True,
+    margins_name='Итого'
+).fillna(0).astype(int)
+
+st.dataframe(summary_pivot.style.format("{:,}"), use_container_width=True)
+
+# 2. Таблица с ключевыми метриками
+st.subheader("💼 Ключевые бизнес-метрики")
+
+metrics_data = {
+    'Категория': ['🚫 Снять', '⚠️ Наблюдать', '✅ Оставить', '**ИТОГО**'],
+    'Количество товаров': [candidates_remove, candidates_watch, candidates_keep, total_products],
+    '% от ассортимента': [
+        f"{candidates_remove/total_products*100:.1f}%",
+        f"{candidates_watch/total_products*100:.1f}%",
+        f"{candidates_keep/total_products*100:.1f}%",
+        "100%"
+    ],
+    'Объём продаж (ед.)': [
+        f"{remove_sales_volume:,.0f}",
+        f"{watch_sales_volume:,.0f}",
+        f"{keep_sales_volume:,.0f}",
+        f"{total_sales_volume:,.0f}"
+    ],
+    '% от оборота': [
+        f"{remove_sales_volume/total_sales_volume*100:.1f}%",
+        f"{watch_sales_volume/total_sales_volume*100:.1f}%",
+        f"{keep_sales_volume/total_sales_volume*100:.1f}%",
+        "100%"
+    ]
+}
+
+metrics_df = pd.DataFrame(metrics_data)
+st.dataframe(metrics_df, use_container_width=True, hide_index=True)
+
+# 3. Топ-20 товаров к снятию
+st.subheader("🔴 Топ-20 товаров к снятию (по объёму продаж)")
+
+remove_candidates = final[final['Рекомендация'] == "🚫 Снять"].nlargest(20, 'total_qty')
+remove_display = remove_candidates[['Art', 'Name', 'abc_category', 'total_qty', 'consecutive_zeros', 'no_store_ratio', 'Причина']].copy()
+remove_display['no_store_ratio'] = (remove_display['no_store_ratio'] * 100).round(1).astype(str) + '%'
+remove_display.columns = ['Артикул', 'Название', 'ABC', 'Объём продаж', 'Недель без продаж', 'Магазинов без продаж', 'Причина']
+
+st.dataframe(remove_display, use_container_width=True, hide_index=True)
+
+# 4. Товары под наблюдением
+st.subheader("🟡 Топ-20 товаров под наблюдением")
+
+watch_candidates = final[final['Рекомендация'] == "⚠️ Наблюдать"].nlargest(20, 'total_qty')
+watch_display = watch_candidates[['Art', 'Name', 'abc_category', 'total_qty', 'consecutive_zeros', 'prob_dying', 'Причина']].copy()
+watch_display['prob_dying'] = watch_display['prob_dying'].round(1).astype(str) + '%'
+watch_display.columns = ['Артикул', 'Название', 'ABC', 'Объём продаж', 'Недель без продаж', 'Риск снятия', 'Причина']
+
+st.dataframe(watch_display, use_container_width=True, hide_index=True)
+
+# 5. Статистика по магазинам
+st.subheader("🏪 Распределение продаж по магазинам")
+
+store_stats = df.groupby('Magazin').agg({
+    'Art': 'nunique',
+    'Qty': 'sum'
+}).reset_index()
+store_stats.columns = ['Магазин', 'Уникальных товаров', 'Объём продаж']
+store_stats = store_stats.sort_values('Объём продаж', ascending=False)
+
+col1, col2 = st.columns([2, 1])
+with col1:
+    st.dataframe(store_stats, use_container_width=True, hide_index=True)
+with col2:
+    st.metric("Всего магазинов", len(store_stats))
+    st.metric("Средний оборот", f"{store_stats['Объём продаж'].mean():,.0f} ед.")
 
 # === ФИЛЬТРЫ И ТАБЛИЦА ===
 st.subheader("🔍 Фильтры")
@@ -783,18 +854,29 @@ if st.button("📥 Подготовить Excel"):
     try:
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            # Основные результаты
             output_cols = ['Art', 'Name', 'abc_category', 'xyz_category', 'total_qty', 'consecutive_zeros', 'no_store_ratio', 'prob_dying', 'Причина', 'Рекомендация']
             if 'forecast_30_median' in final.columns:
                 output_cols.insert(-2, 'forecast_30_median')
             
             final[output_cols].to_excel(writer, sheet_name='Результаты', index=False)
             
+            # Статистика
             stats = pd.DataFrame({
                 'Метрика': ['Всего', 'Снять', 'Наблюдать', 'Оставить', 'Порог_ML_%'],
-                'Значение': [total_products, candidates_remove, candidates_watch, 
-                           total_products - candidates_remove - candidates_watch, final_threshold*100]
+                'Значение': [total_products, candidates_remove, candidates_watch, candidates_keep, final_threshold*100]
             })
             stats.to_excel(writer, sheet_name='Статистика', index=False)
+            
+            # Сводная таблица
+            summary_pivot.to_excel(writer, sheet_name='Сводная_ABC')
+            
+            # Бизнес-метрики
+            metrics_df.to_excel(writer, sheet_name='Бизнес_метрики', index=False)
+            
+            # Топ к снятию
+            if len(remove_display) > 0:
+                remove_display.to_excel(writer, sheet_name='Топ_к_снятию', index=False)
         
         st.download_button("📥 Скачать Excel", buffer.getvalue(), "analysis_results.xlsx", 
                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -807,132 +889,5 @@ with st.expander("ℹ️ Информация"):
     if not PROPHET_AVAILABLE:
         st.warning("⚠️ Установите Prophet: pip install prophet")
 
-# === РЕКОМЕНДАЦИИ ML/DS ИНЖЕНЕРА ===
-st.header("🎓 Рекомендации Data Scientist")
-
-with st.expander("📊 Feature Importance - Важность признаков модели", expanded=True):
-    if feature_importance is not None:
-        st.write("**Влияние признаков на решение модели:**")
-
-        # Визуализация важности признаков
-        col1, col2 = st.columns([2, 1])
-
-        with col1:
-            # Используем st.bar_chart для простой визуализации
-            chart_data = feature_importance.set_index('feature')['importance']
-            st.bar_chart(chart_data)
-
-        with col2:
-            st.write("**Топ-5 признаков:**")
-            for idx, row in feature_importance.head(5).iterrows():
-                importance_pct = row['importance'] * 100
-                st.metric(
-                    label=row['feature'],
-                    value=f"{importance_pct:.1f}%"
-                )
-
-        st.divider()
-        st.write("**Интерпретация:**")
-
-        # Анализ топового признака
-        top_feature = feature_importance.iloc[0]['feature']
-        top_importance = feature_importance.iloc[0]['importance'] * 100
-
-        if top_feature == 'consecutive_zeros':
-            st.info(f"🔍 **Последовательные недели без продаж** - наиболее важный фактор ({top_importance:.1f}%). Товары с длительным отсутствием продаж имеют высокую вероятность снятия.")
-        elif top_feature == 'no_store_ratio':
-            st.info(f"🔍 **Доля магазинов без продаж** - ключевой индикатор ({top_importance:.1f}%). Низкое распространение товара критично для решений.")
-        elif top_feature == 'total_qty':
-            st.info(f"🔍 **Общий объём продаж** - главный фактор ({top_importance:.1f}%). Товары с низким оборотом попадают под снятие.")
-
-    else:
-        st.warning("⚠️ Feature importance недоступна - модель не обучена")
-
-with st.expander("💡 Ключевые инсайты и рекомендации", expanded=True):
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("📌 Основные находки")
-
-        # Анализ по категориям
-        c_category_remove = len(final[(final['abc_category'] == 'C') & (final['Рекомендация'] == '🚫 Снять')])
-        b_category_remove = len(final[(final['abc_category'] == 'B') & (final['Рекомендация'] == '🚫 Снять')])
-        a_category_remove = len(final[(final['abc_category'] == 'A') & (final['Рекомендация'] == '🚫 Снять')])
-
-        st.write(f"""
-        **Распределение решений по ABC:**
-        - Категория C: {c_category_remove} к снятию ({c_category_remove/len(final[final['abc_category']=='C'])*100:.1f}%)
-        - Категория B: {b_category_remove} к снятию ({b_category_remove/len(final[final['abc_category']=='B'])*100 if len(final[final['abc_category']=='B'])>0 else 0:.1f}%)
-        - Категория A: {a_category_remove} к снятию ({a_category_remove/len(final[final['abc_category']=='A'])*100 if len(final[final['abc_category']=='A'])>0 else 0:.1f}%)
-        """)
-
-        # Средние метрики
-        avg_zero_weeks_remove = final[final['Рекомендация'] == '🚫 Снять']['consecutive_zeros'].mean()
-        avg_zero_weeks_keep = final[final['Рекомендация'] == '✅ Оставить']['consecutive_zeros'].mean()
-
-        st.write(f"""
-        **Средние показатели:**
-        - Среднее недель без продаж (снять): {avg_zero_weeks_remove:.1f}
-        - Среднее недель без продаж (оставить): {avg_zero_weeks_keep:.1f}
-        - Разница: **{avg_zero_weeks_remove - avg_zero_weeks_keep:.1f}x**
-        """)
-
-    with col2:
-        st.subheader("🎯 Рекомендации")
-
-        st.write("""
-        **1. Приоритизация снятия:**
-        - Начните с категории C с высокой `consecutive_zeros`
-        - Товары с `no_store_ratio > 85%` - первая волна
-        - Проверьте Prophet прогнозы для топ-товаров
-
-        **2. Товары "Наблюдать":**
-        - Установите автомониторинг на 4-6 недель
-        - Проведите A/B тест скидок перед снятием
-        - Проверьте сезонность продаж
-
-        **3. Улучшение модели:**
-        - Добавьте сезонные признаки (месяц, квартал)
-        - Учитывайте ценовую историю
-        - Интегрируйте данные о маркетинговых акциях
-
-        **4. Бизнес-процессы:**
-        - Автоматизируйте еженедельный мониторинг
-        - Создайте дашборд для отслеживания метрик
-        - Внедрите систему алертов для критичных товаров
-        """)
-
-with st.expander("🔬 Метрики качества модели", expanded=False):
-    st.write(f"""
-    **Статистика модели:**
-    - Точность на тестовой выборке: **{test_score:.2%}** {'✅' if test_score > 0.7 else '⚠️' if test_score > 0.5 else '❌'}
-    - Всего обработано товаров: **{len(final)}**
-    - Положительных меток (к снятию): **{candidates_remove}** ({candidates_remove/total_products*100:.1f}%)
-    - Порог модели: **{final_threshold*100:.0f}%**
-    """)
-
-    if test_score > 0:
-        if test_score > 0.8:
-            st.success("✅ Отличная точность модели! Рекомендации можно применять с высокой уверенностью.")
-        elif test_score > 0.65:
-            st.info("ℹ️ Хорошая точность. Рекомендуется дополнительная валидация критичных решений.")
-        else:
-            st.warning("⚠️ Умеренная точность. Используйте модель как вспомогательный инструмент, не единственный критерий.")
-
-    st.write("""
-    **Методология:**
-    - Алгоритм: Random Forest Classifier (30 деревьев)
-    - Балансировка классов: {'Включена' if use_balanced_model else 'Выключена'}
-    - Валидация: Train/Test Split (70/30)
-    - Признаки: Временные ряды, ABC/XYZ, распределение по магазинам
-    """)
-
-    if feature_importance is not None:
-        st.write("**Все признаки модели:**")
-        st.dataframe(
-            feature_importance.style.format({'importance': '{:.2%}'}),
-            use_container_width=True
-        )
-
 st.divider()
-st.caption("🤖 Отчёт сгенерирован ML-системой анализа товарного портфеля | Data Science & ML Engineering")
+st.caption("📊 Отчёт сгенерирован системой анализа товарного портфеля")
