@@ -9,15 +9,15 @@ try:
     PROPHET_AVAILABLE = True
 except ImportError:
     PROPHET_AVAILABLE = False
-    st.warning("⚠️ Prophet не установлен. Прогнозы будут недоступны.")
+    st.warning("⚠️ Prophet не встановлено. Прогнози будуть недоступні.")
 
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from io import BytesIO
 
-st.set_page_config(page_title="Анализ товаров", layout="wide")
+st.set_page_config(page_title="Аналіз товарів", layout="wide")
 
-# Инициализация session_state
+# Ініціалізація session_state
 if 'run_analysis' not in st.session_state:
     st.session_state.run_analysis = False
 if 'loaded_data' not in st.session_state:
@@ -25,85 +25,85 @@ if 'loaded_data' not in st.session_state:
 if 'data_source_type' not in st.session_state:
     st.session_state.data_source_type = None
 
-st.title("🔍 Анализ товаров: определение кандидатов на снятие")
+st.title("🔍 Аналіз товарів: визначення кандидатів на зняття")
 
-# === НАСТРОЙКИ ===
+# === НАЛАШТУВАННЯ ===
 with st.sidebar:
-    st.header("⚙️ Настройки")
-    TOP_N = st.slider("Количество топ-артикулов для Prophet", 10, 50, 20)
+    st.header("⚙️ Налаштування")
+    TOP_N = st.slider("Кількість топ-артикулів для Prophet", 10, 50, 20)
 
-    st.subheader("🎯 Критерии снятия")
-    zero_weeks_threshold = st.slider("Недель подряд без продаж", 8, 20, 12)
-    min_total_sales = st.slider("Минимальный объем продаж", 1, 50, 5)
-    max_store_ratio = st.slider("Макс. доля магазинов без продаж (%)", 70, 95, 85, 5) / 100
+    st.subheader("🎯 Критерії зняття")
+    zero_weeks_threshold = st.slider("Тижнів підряд без продажів", 8, 20, 12)
+    min_total_sales = st.slider("Мінімальний обсяг продажів", 1, 50, 5)
+    max_store_ratio = st.slider("Макс. частка магазинів без продажів (%)", 70, 95, 85, 5) / 100
 
     st.subheader("🤖 Модель ML")
-    use_balanced_model = st.checkbox("Использовать балансировку классов", value=True)
-    final_threshold = st.slider("Финальный порог для снятия (%)", 50, 90, 70, 5) / 100
+    use_balanced_model = st.checkbox("Використовувати балансування класів", value=True)
+    final_threshold = st.slider("Фінальний поріг для зняття (%)", 50, 90, 70, 5) / 100
 
     st.divider()
 
-    # Кнопка очистки кеша
-    if st.button("🔄 Очистить кеш данных"):
+    # Кнопка очищення кешу
+    if st.button("🔄 Очистити кеш даних"):
         st.session_state.loaded_data = None
         st.cache_data.clear()
-        st.success("Кеш очищен!")
+        st.success("Кеш очищено!")
         st.rerun()
 
-# === ЗАГРУЗКА ДАННЫХ ===
-st.header("📁 Загрузка данных")
-st.info("💡 Формат: дата, артикул, количество, магазин, название")
+# === ЗАВАНТАЖЕННЯ ДАНИХ ===
+st.header("📁 Завантаження даних")
+st.info("💡 Формат: дата, артикул, кількість, магазин, назва")
 
-# Выбор источника данных
+# Вибір джерела даних
 data_source = st.radio(
-    "Выберите источник данных:",
-    ["Google Sheets", "Локальный файл"],
+    "Оберіть джерело даних:",
+    ["Google Sheets", "Локальний файл"],
     horizontal=True
 )
 
 uploaded_file = None
 sheets_url = None
 
-if data_source == "Локальный файл":
-    uploaded_file = st.file_uploader("Выберите Excel файл", type=['xlsx', 'xls'])
+if data_source == "Локальний файл":
+    uploaded_file = st.file_uploader("Оберіть Excel файл", type=['xlsx', 'xls'])
 else:
     sheets_url = st.text_input(
-        "Ссылка на Google Sheets:",
+        "Посилання на Google Sheets:",
         value="https://docs.google.com/spreadsheets/d/1lJLON5N_EKQ5ICv0Pprp5DamP1tNAhBIph4uEoWC04Q/edit?gid=64159818#gid=64159818",
-        help="Таблица должна иметь публичный доступ"
+        help="Таблиця повинна мати публічний доступ"
     )
 
-# === КЕШИРОВАННЫЕ ФУНКЦИИ ЗАГРУЗКИ ===
+# === КЕШОВАНІ ФУНКЦІЇ ЗАВАНТАЖЕННЯ ===
 @st.cache_data(show_spinner=False)
 def _fetch_google_sheets_data(sheets_url):
-    """Кешированная загрузка сырых данных из Google Sheets"""
+    """Кешоване завантаження сирих даних з Google Sheets"""
     import re
     import time
 
-    # Извлекаем spreadsheet ID
+    # Витягуємо spreadsheet ID
     spreadsheet_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', sheets_url)
     if not spreadsheet_match:
-        raise ValueError("Неверный формат ссылки на Google Sheets")
+        raise ValueError("Невірний формат посилання на Google Sheets")
 
     spreadsheet_id = spreadsheet_match.group(1)
 
-    # Извлекаем GID (ID листа)
+    # Витягуємо GID (ID аркуша)
     gid_match = re.search(r'[#&]gid=([0-9]+)', sheets_url)
     gid = gid_match.group(1) if gid_match else '0'
 
-    # Формируем URL для экспорта в Excel формате
+    # Формуємо URL для експорту в Excel форматі
     export_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=xlsx&gid={gid}"
 
-    # Загружаем данные с прогресс-баром
-    progress_bar = st.progress(0, text="🔄 Подключение к Google Sheets...")
+    # Завантажуємо дані з прогрес-баром
+    progress_bar = st.progress(0, text="🔄 Підключення до Google Sheets...")
     time.sleep(0.3)
-    progress_bar.progress(20, text="📥 Загрузка данных...")
+    progress_bar.progress(20, text="📥 Завантаження даних...")
 
     df = pd.read_excel(export_url, nrows=100000)
 
-    progress_bar.progress(80, text="✅ Обработка данных...")
+    progress_bar.progress(80, text="✅ Обробка даних...")
     time.sleep(0.2)
-    progress_bar.progress(100, text="✅ Загрузка завершена!")
+    progress_bar.progress(100, text="✅ Завантаження завершено!")
     time.sleep(0.3)
     progress_bar.empty()
 
@@ -111,19 +111,19 @@ def _fetch_google_sheets_data(sheets_url):
 
 @st.cache_data(show_spinner=False)
 def _load_excel_file(file_bytes, sheet_name):
-    """Кешированная загрузка Excel файла"""
+    """Кешоване завантаження Excel файлу"""
     from io import BytesIO
     import time
 
-    progress_bar = st.progress(0, text="📂 Открытие файла...")
+    progress_bar = st.progress(0, text="📂 Відкриття файлу...")
     time.sleep(0.2)
-    progress_bar.progress(30, text="📊 Чтение данных...")
+    progress_bar.progress(30, text="📊 Читання даних...")
 
     df = pd.read_excel(BytesIO(file_bytes), sheet_name=sheet_name, nrows=100000)
 
-    progress_bar.progress(90, text="✅ Финализация...")
+    progress_bar.progress(90, text="✅ Фіналізація...")
     time.sleep(0.2)
-    progress_bar.progress(100, text="✅ Файл загружен!")
+    progress_bar.progress(100, text="✅ Файл завантажено!")
     time.sleep(0.3)
     progress_bar.empty()
 
@@ -131,7 +131,7 @@ def _load_excel_file(file_bytes, sheet_name):
 
 def load_and_process_data(uploaded_file):
     if uploaded_file is None:
-        st.info("👆 Загрузите Excel файл для начала работы")
+        st.info("👆 Завантажте Excel файл для початку роботи")
         return None, False
 
     try:
@@ -139,218 +139,218 @@ def load_and_process_data(uploaded_file):
         uploaded_file.seek(0)
 
         if file_size > 50 * 1024 * 1024:
-            st.error("❌ Файл слишком большой. Максимум: 50MB")
+            st.error("❌ Файл занадто великий. Максимум: 50MB")
             return None, False
 
-        # Определяем листы
+        # Визначаємо аркуші
         file_bytes = uploaded_file.read()
         uploaded_file.seek(0)
         excel_file = pd.ExcelFile(uploaded_file)
-        selected_sheet = st.selectbox("Выберите лист:", excel_file.sheet_names) if len(excel_file.sheet_names) > 1 else excel_file.sheet_names[0]
+        selected_sheet = st.selectbox("Оберіть аркуш:", excel_file.sheet_names) if len(excel_file.sheet_names) > 1 else excel_file.sheet_names[0]
 
-        # Используем кешированную загрузку
+        # Використовуємо кешоване завантаження
         df = _load_excel_file(file_bytes, selected_sheet)
         if len(df) == 100000:
-            st.warning("⚠️ Файл обрезан до 100,000 строк")
+            st.warning("⚠️ Файл обрізано до 100,000 рядків")
+
+        st.success(f"✅ Завантажено {len(df)} рядків")
         
-        st.success(f"✅ Загружено {len(df)} строк")
-        
-        # Сопоставление колонок
+        # Співставлення колонок
         available_cols = list(df.columns)
         col1, col2 = st.columns(2)
-        
+
         with col1:
             date_col = st.selectbox("Дата:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['дат', 'date'])), 0))
             art_col = st.selectbox("Артикул:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['арт', 'art'])), 0))
-            qty_col = st.selectbox("Количество:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['кол', 'qty', 'количество'])), 0))
-        
+            qty_col = st.selectbox("Кількість:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['кол', 'кіл', 'qty', 'кількість', 'количество'])), 0))
+
         with col2:
             magazin_col = st.selectbox("Магазин:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['маг', 'magazin', 'магазин'])), 0))
-            name_col = st.selectbox("Название:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['назв', 'name', 'название'])), 0))
-            segment_col = st.selectbox("Сегмент (опционально):", ['Без сегментации'] + available_cols)
+            name_col = st.selectbox("Назва:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['назв', 'name', 'назва', 'название'])), 0))
+            segment_col = st.selectbox("Сегмент (опціонально):", ['Без сегментації'] + available_cols)
         
-        # Переименование колонок
+        # Перейменування колонок
         column_mapping = {date_col: 'Data', art_col: 'Art', qty_col: 'Qty', magazin_col: 'Magazin', name_col: 'Name'}
-        if segment_col != 'Без сегментации':
+        if segment_col != 'Без сегментації':
             column_mapping[segment_col] = 'Segment'
-        
+
         df = df.rename(columns=column_mapping)
-        
-        # Проверка обязательных колонок
+
+        # Перевірка обов'язкових колонок
         required_cols = ['Data', 'Art', 'Qty', 'Magazin', 'Name']
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
-            st.error(f"❌ Отсутствуют колонки: {missing_cols}")
+            st.error(f"❌ Відсутні колонки: {missing_cols}")
             return None, False
-        
-        # Фильтрация по сегменту
+
+        # Фільтрація по сегменту
         if 'Segment' in df.columns:
-            st.subheader("🎯 Выбор сегмента")
+            st.subheader("🎯 Вибір сегмента")
             unique_segments = sorted(df['Segment'].dropna().unique())
-            selected_segment = st.selectbox("Сегмент:", ['Все сегменты'] + list(unique_segments))
-            
-            if selected_segment != 'Все сегменты':
+            selected_segment = st.selectbox("Сегмент:", ['Всі сегменти'] + list(unique_segments))
+
+            if selected_segment != 'Всі сегменти':
                 df = df[df['Segment'] == selected_segment].copy()
-                st.success(f"✅ Выбран сегмент: {selected_segment}")
-        
-        with st.expander("📊 Предварительный просмотр"):
+                st.success(f"✅ Обрано сегмент: {selected_segment}")
+
+        with st.expander("📊 Попередній перегляд"):
             st.dataframe(df.head())
             col1, col2, col3 = st.columns(3)
-            with col1: st.metric("Записей", len(df))
-            with col2: st.metric("Артикулов", df['Art'].nunique())
+            with col1: st.metric("Записів", len(df))
+            with col2: st.metric("Артикулів", df['Art'].nunique())
             with col3:
                 try:
                     date_min = pd.to_datetime(df['Data'], errors='coerce').min()
                     date_max = pd.to_datetime(df['Data'], errors='coerce').max()
-                    st.metric("Период", f"{date_min.strftime('%Y-%m-%d')} - {date_max.strftime('%Y-%m-%d')}")
+                    st.metric("Період", f"{date_min.strftime('%Y-%m-%d')} - {date_max.strftime('%Y-%m-%d')}")
                 except:
-                    st.metric("Период", "Ошибка дат")
-        
+                    st.metric("Період", "Помилка дат")
+
         return df, True
-        
+
     except Exception as e:
-        st.error(f"❌ Ошибка загрузки: {str(e)}")
+        st.error(f"❌ Помилка завантаження: {str(e)}")
         return None, False
 
 def load_from_google_sheets(sheets_url):
-    """Загрузка данных из публичной Google Sheets таблицы"""
+    """Завантаження даних з публічної Google Sheets таблиці"""
     if not sheets_url or sheets_url.strip() == "":
-        st.info("👆 Введите ссылку на Google Sheets")
+        st.info("👆 Введіть посилання на Google Sheets")
         return None, False
 
     try:
-        # Используем кешированную загрузку данных
+        # Використовуємо кешоване завантаження даних
         df = _fetch_google_sheets_data(sheets_url)
 
         if len(df) == 100000:
-            st.warning("⚠️ Файл обрезан до 100,000 строк")
+            st.warning("⚠️ Файл обрізано до 100,000 рядків")
 
-        st.success(f"✅ Загружено {len(df)} строк из Google Sheets")
+        st.success(f"✅ Завантажено {len(df)} рядків з Google Sheets")
 
-        # Сопоставление колонок (идентично load_and_process_data)
+        # Співставлення колонок (ідентично load_and_process_data)
         available_cols = list(df.columns)
         col1, col2 = st.columns(2)
 
         with col1:
             date_col = st.selectbox("Дата:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['дат', 'date'])), 0), key="gs_date")
             art_col = st.selectbox("Артикул:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['арт', 'art'])), 0), key="gs_art")
-            qty_col = st.selectbox("Количество:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['кол', 'qty', 'количество'])), 0), key="gs_qty")
+            qty_col = st.selectbox("Кількість:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['кол', 'кіл', 'qty', 'кількість', 'количество'])), 0), key="gs_qty")
 
         with col2:
             magazin_col = st.selectbox("Магазин:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['маг', 'magazin', 'магазин'])), 0), key="gs_magazin")
-            name_col = st.selectbox("Название:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['назв', 'name', 'название'])), 0), key="gs_name")
-            segment_col = st.selectbox("Сегмент (опционально):", ['Без сегментации'] + available_cols, key="gs_segment")
+            name_col = st.selectbox("Назва:", available_cols, index=next((i for i, col in enumerate(available_cols) if any(word in col.lower() for word in ['назв', 'name', 'назва', 'название'])), 0), key="gs_name")
+            segment_col = st.selectbox("Сегмент (опціонально):", ['Без сегментації'] + available_cols, key="gs_segment")
 
-        # Переименование колонок
+        # Перейменування колонок
         column_mapping = {date_col: 'Data', art_col: 'Art', qty_col: 'Qty', magazin_col: 'Magazin', name_col: 'Name'}
-        if segment_col != 'Без сегментации':
+        if segment_col != 'Без сегментації':
             column_mapping[segment_col] = 'Segment'
 
         df = df.rename(columns=column_mapping)
 
-        # Проверка обязательных колонок
+        # Перевірка обов'язкових колонок
         required_cols = ['Data', 'Art', 'Qty', 'Magazin', 'Name']
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
-            st.error(f"❌ Отсутствуют колонки: {missing_cols}")
+            st.error(f"❌ Відсутні колонки: {missing_cols}")
             return None, False
 
-        # Фильтрация по сегменту
+        # Фільтрація по сегменту
         if 'Segment' in df.columns:
-            st.subheader("🎯 Выбор сегмента")
+            st.subheader("🎯 Вибір сегмента")
             unique_segments = sorted(df['Segment'].dropna().unique())
-            selected_segment = st.selectbox("Сегмент:", ['Все сегменты'] + list(unique_segments), key="gs_segment_filter")
+            selected_segment = st.selectbox("Сегмент:", ['Всі сегменти'] + list(unique_segments), key="gs_segment_filter")
 
-            if selected_segment != 'Все сегменты':
+            if selected_segment != 'Всі сегменти':
                 df = df[df['Segment'] == selected_segment].copy()
-                st.success(f"✅ Выбран сегмент: {selected_segment}")
+                st.success(f"✅ Обрано сегмент: {selected_segment}")
 
-        with st.expander("📊 Предварительный просмотр"):
+        with st.expander("📊 Попередній перегляд"):
             st.dataframe(df.head())
             col1, col2, col3 = st.columns(3)
-            with col1: st.metric("Записей", len(df))
-            with col2: st.metric("Артикулов", df['Art'].nunique())
+            with col1: st.metric("Записів", len(df))
+            with col2: st.metric("Артикулів", df['Art'].nunique())
             with col3:
                 try:
                     date_min = pd.to_datetime(df['Data'], errors='coerce').min()
                     date_max = pd.to_datetime(df['Data'], errors='coerce').max()
-                    st.metric("Период", f"{date_min.strftime('%Y-%m-%d')} - {date_max.strftime('%Y-%m-%d')}")
+                    st.metric("Період", f"{date_min.strftime('%Y-%m-%d')} - {date_max.strftime('%Y-%m-%d')}")
                 except:
-                    st.metric("Период", "Ошибка дат")
+                    st.metric("Період", "Помилка дат")
 
         return df, True
 
     except Exception as e:
-        st.error(f"❌ Ошибка загрузки из Google Sheets: {str(e)}")
-        st.info("💡 Убедитесь, что таблица имеет публичный доступ")
+        st.error(f"❌ Помилка завантаження з Google Sheets: {str(e)}")
+        st.info("💡 Переконайтеся, що таблиця має публічний доступ")
         return None, False
 
-# Загрузка данных в зависимости от выбранного источника с использованием session_state
-# Проверяем, изменился ли источник данных
+# Завантаження даних в залежності від обраного джерела з використанням session_state
+# Перевіряємо, чи змінилось джерело даних
 if st.session_state.data_source_type != data_source:
-    st.session_state.loaded_data = None  # Сбрасываем кеш при смене источника
+    st.session_state.loaded_data = None  # Скидаємо кеш при зміні джерела
     st.session_state.data_source_type = data_source
 
-# Если данные уже загружены и источник не изменился, используем кешированные
+# Якщо дані вже завантажені і джерело не змінилось, використовуємо кешовані
 if st.session_state.loaded_data is not None:
     df, data_loaded = st.session_state.loaded_data
     if data_loaded:
-        st.info("ℹ️ Используются ранее загруженные данные")
+        st.info("ℹ️ Використовуються раніше завантажені дані")
 else:
-    # Загружаем новые данные
-    if data_source == "Локальный файл":
+    # Завантажуємо нові дані
+    if data_source == "Локальний файл":
         df, data_loaded = load_and_process_data(uploaded_file)
     else:
         df, data_loaded = load_from_google_sheets(sheets_url)
 
-    # Сохраняем в session_state
+    # Зберігаємо в session_state
     if data_loaded:
         st.session_state.loaded_data = (df, data_loaded)
 
 if data_loaded:
-    st.header("🚀 Запуск анализа")
-    if st.button("▶️ НАЧАТЬ АНАЛИЗ", type="primary", use_container_width=True):
+    st.header("🚀 Запуск аналізу")
+    if st.button("▶️ ПОЧАТИ АНАЛІЗ", type="primary", use_container_width=True):
         st.session_state.run_analysis = True
-    
+
     if not st.session_state.get('run_analysis', False):
-        st.info("👆 Нажмите кнопку для запуска анализа")
+        st.info("👆 Натисніть кнопку для запуску аналізу")
         st.stop()
 else:
     st.stop()
 
-# === ОСНОВНАЯ ОБРАБОТКА ===
+# === ОСНОВНА ОБРОБКА ===
 def process_data(df):
-    with st.spinner("🔄 Обработка данных..."):
-        # Очистка данных
+    with st.spinner("🔄 Обробка даних..."):
+        # Очищення даних
         df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce')
         df = df.dropna(subset=['Data'])
         df['Qty'] = pd.to_numeric(df['Qty'], errors='coerce').fillna(0)
         df = df[df['Qty'] >= 0]
-        
+
         if len(df) == 0:
-            st.error("❌ Нет валидных данных")
+            st.error("❌ Немає валідних даних")
             st.stop()
-        
+
         df['year_week'] = df['Data'].dt.strftime('%Y-%U')
-        
-        # Ограничение артикулов
+
+        # Обмеження артикулів
         all_arts = df['Art'].unique()
         if len(all_arts) > 5000:
-            st.warning("⚠️ Обрабатываем топ-5000 артикулов по продажам")
+            st.warning("⚠️ Обробляємо топ-5000 артикулів за продажами")
             top_arts = df.groupby('Art')['Qty'].sum().nlargest(5000).index
             all_arts = top_arts
             df = df[df['Art'].isin(all_arts)]
-        
-        # Агрегация по неделям
+
+        # Агрегація по тижнях
         weekly = df.groupby(['Art', 'year_week'])['Qty'].sum().reset_index()
         unique_weeks = sorted(df['year_week'].unique())
         all_weeks = pd.MultiIndex.from_product([all_arts, unique_weeks], names=['Art', 'year_week'])
         weekly = weekly.set_index(['Art', 'year_week']).reindex(all_weeks, fill_value=0).reset_index()
-        
+
         return df, weekly, all_arts, unique_weeks
 
 def calculate_abc_xyz_analysis(df):
-    # ABC анализ
+    # ABC аналіз
     abc_analysis = df.groupby('Art').agg({
         'Qty': ['sum', 'mean', 'std'],
         'Data': ['min', 'max']
@@ -358,34 +358,34 @@ def calculate_abc_xyz_analysis(df):
     
     abc_analysis.columns = ['Art', 'total_qty', 'avg_qty', 'std_qty', 'first_sale', 'last_sale']
     abc_analysis['days_in_catalog'] = (abc_analysis['last_sale'] - abc_analysis['first_sale']).dt.days + 1
-    
-    # ABC категории (исправлено: сортировка перед кумулятивным расчетом)
+
+    # ABC категорії (виправлено: сортування перед кумулятивним розрахунком)
     abc_analysis = abc_analysis.sort_values('total_qty', ascending=False).reset_index(drop=True)
     abc_analysis['cum_qty'] = abc_analysis['total_qty'].cumsum()
     total_sum = abc_analysis['total_qty'].sum()
     abc_analysis['cum_qty_pct'] = abc_analysis['cum_qty'] / total_sum if total_sum > 0 else 0
-    
+
     def get_abc_category(cum_pct):
         if cum_pct <= 0.8: return 'A'
         elif cum_pct <= 0.95: return 'B'
         else: return 'C'
-    
+
     abc_analysis['abc_category'] = abc_analysis['cum_qty_pct'].apply(get_abc_category)
-    
-    # XYZ анализ (исправлено: обработка нулевых значений)
+
+    # XYZ аналіз (виправлено: обробка нульових значень)
     abc_analysis['coefficient_variation'] = np.where(
         abc_analysis['avg_qty'] > 0,
         abc_analysis['std_qty'] / abc_analysis['avg_qty'],
-        999  # Большое значение для товаров без продаж
+        999  # Велике значення для товарів без продажів
     )
-    
+
     def get_xyz_category(cv):
-        if cv <= 0.1: return 'X'  # Стабильный спрос
-        elif cv <= 0.25: return 'Y'  # Умеренно изменчивый
-        else: return 'Z'  # Нестабильный спрос
-    
+        if cv <= 0.1: return 'X'  # Стабільний попит
+        elif cv <= 0.25: return 'Y'  # Помірно мінливий
+        else: return 'Z'  # Нестабільний попит
+
     abc_analysis['xyz_category'] = abc_analysis['coefficient_variation'].apply(get_xyz_category)
-    
+
     return abc_analysis
 
 def calculate_features(weekly, df):
@@ -401,23 +401,24 @@ def calculate_features(weekly, df):
                 'zero_weeks_12': 0, 
                 'trend': 0
             })
-        
-        # Скользящие средние
+
+
+        # Ковзні середні
         qty_series_pd = pd.Series(qty_series)
         ma_3 = qty_series_pd.rolling(3, min_periods=1).mean().iloc[-1]
         ma_6 = qty_series_pd.rolling(6, min_periods=1).mean().iloc[-1]
-        
-        # Последовательные нули с конца
+
+        # Послідовні нулі з кінця
         consecutive_zeros = 0
         for val in reversed(qty_series):
-            if val == 0: 
+            if val == 0:
                 consecutive_zeros += 1
-            else: 
+            else:
                 break
-        
-        # Нули за последние 12 недель
+
+        # Нулі за останні 12 тижнів
         zero_weeks_12 = int(np.sum(qty_series[-12:] == 0)) if len(qty_series) >= 12 else int(np.sum(qty_series == 0))
-        
+
         # Тренд
         trend = 0
         if len(qty_series) >= 4:
@@ -436,120 +437,120 @@ def calculate_features(weekly, df):
             'trend': float(trend)
         })
     
-    # Применяем функцию и получаем DataFrame с Art в индексе
+    # Застосовуємо функцію і отримуємо DataFrame з Art в індексі
     features = weekly.groupby('Art').apply(compute_features, include_groups=False).reset_index()
-    
-    # Расчет доли магазинов без продаж
+
+    # Розрахунок частки магазинів без продажів
     total_stores = df['Magazin'].nunique()
-    
+
     if total_stores == 0:
-        st.error("❌ Не найдено магазинов в данных")
+        st.error("❌ Не знайдено магазинів в даних")
         st.stop()
-    
-    # Магазины с продажами для каждого артикула
+
+    # Магазини з продажами для кожного артикула
     stores_with_sales = df[df['Qty'] > 0].groupby('Art')['Magazin'].nunique().reset_index()
     stores_with_sales.columns = ['Art', 'stores_with_sales']
     stores_with_sales['no_store_ratio'] = 1 - (stores_with_sales['stores_with_sales'] / total_stores)
-    
+
     features = features.merge(stores_with_sales[['Art', 'no_store_ratio']], on='Art', how='left')
     features['no_store_ratio'] = features['no_store_ratio'].fillna(1.0)
-    
+
     return features
 
 def create_ml_model(features, abc_analysis):
-    # Создание меток для обучения (ИСПРАВЛЕННАЯ ЛОГИКА)
+    # Створення міток для навчання (ВИПРАВЛЕНА ЛОГІКА)
     def create_labels(row):
         score = 0
-        
-        # Категория C - агрессивные критерии
+
+        # Категорія C - агресивні критерії
         if row['abc_category'] == 'C':
-            if row['consecutive_zeros'] >= zero_weeks_threshold: 
+            if row['consecutive_zeros'] >= zero_weeks_threshold:
                 score += 3
-            elif row['zero_weeks_12'] >= zero_weeks_threshold // 2: 
+            elif row['zero_weeks_12'] >= zero_weeks_threshold // 2:
                 score += 2
-            
-            if row['no_store_ratio'] > max_store_ratio: 
+
+            if row['no_store_ratio'] > max_store_ratio:
                 score += 2
-            
-            if row['total_qty'] < min_total_sales: 
+
+            if row['total_qty'] < min_total_sales:
                 score += 2
-            
-            if row['trend'] < -0.1: 
-                score += 1
-        
-        # Категория B - умеренные критерии (ИСПРАВЛЕНО)
-        elif row['abc_category'] == 'B':
-            if row['consecutive_zeros'] >= zero_weeks_threshold * 2:  # 24 недели
-                score += 3
-            elif row['consecutive_zeros'] >= zero_weeks_threshold:  # 12 недель
-                score += 2
-            
-            if row['no_store_ratio'] > max_store_ratio:  # 85%
-                score += 2
-            
-            if row['total_qty'] < min_total_sales * 2:  # 10 единиц
-                score += 1
-            
+
             if row['trend'] < -0.1:
                 score += 1
-        
-        # Категория A - только критичные случаи
+
+        # Категорія B - помірні критерії (ВИПРАВЛЕНО)
+        elif row['abc_category'] == 'B':
+            if row['consecutive_zeros'] >= zero_weeks_threshold * 2:  # 24 тижні
+                score += 3
+            elif row['consecutive_zeros'] >= zero_weeks_threshold:  # 12 тижнів
+                score += 2
+
+            if row['no_store_ratio'] > max_store_ratio:  # 85%
+                score += 2
+
+            if row['total_qty'] < min_total_sales * 2:  # 10 одиниць
+                score += 1
+
+            if row['trend'] < -0.1:
+                score += 1
+
+        # Категорія A - тільки критичні випадки
         elif row['abc_category'] == 'A':
-            if row['consecutive_zeros'] >= zero_weeks_threshold * 3:  # 36 недель
+            if row['consecutive_zeros'] >= zero_weeks_threshold * 3:  # 36 тижнів
                 score += 2
             if row['no_store_ratio'] > 0.95:  # 95%
                 score += 1
-        
-        # Критичные случаи для ЛЮБОЙ категории
+
+        # Критичні випадки для БУДЬ-ЯКОЇ категорії
         if row['consecutive_zeros'] >= zero_weeks_threshold * 2 and row['no_store_ratio'] > max_store_ratio:
-            score += 2  # Усиление для комбинации факторов
-        
+            score += 2  # Посилення для комбінації факторів
+
         return 1 if score >= 4 else 0
-    
-    # Объединение данных
+
+    # Об'єднання даних
     final_features = features.merge(
-        abc_analysis[['Art', 'total_qty', 'abc_category', 'last_sale']], 
-        on='Art', 
+        abc_analysis[['Art', 'total_qty', 'abc_category', 'last_sale']],
+        on='Art',
         how='left'
     )
     final_features['label'] = final_features.apply(create_labels, axis=1)
-    
-    # Обучение модели
+
+    # Навчання моделі
     feature_cols = ['ma_3', 'ma_6', 'consecutive_zeros', 'zero_weeks_12', 'trend', 'no_store_ratio', 'total_qty']
     X = final_features[feature_cols].fillna(0)
     y = final_features['label']
     
-    st.write(f"**Распределение:** Снять: {y.sum()}, Оставить: {len(y) - y.sum()}")
-    
-    # Проверка возможности обучения
+    st.write(f"**Розподіл:** Зняти: {y.sum()}, Залишити: {len(y) - y.sum()}")
+
+    # Перевірка можливості навчання
     if len(y.unique()) > 1 and y.sum() >= 2:
         try:
             X_train, X_test, y_train, y_test = train_test_split(
-                X, y, 
-                stratify=y, 
-                random_state=42, 
+                X, y,
+                stratify=y,
+                random_state=42,
                 test_size=0.3
             )
-            
+
             clf = RandomForestClassifier(
-                n_estimators=30, 
-                random_state=42, 
+                n_estimators=30,
+                random_state=42,
                 class_weight='balanced' if use_balanced_model else None,
-                max_depth=8, 
-                min_samples_split=5, 
+                max_depth=8,
+                min_samples_split=5,
                 n_jobs=1
             )
-            
+
             clf.fit(X_train, y_train)
             final_features['prob_dying'] = clf.predict_proba(X)[:, 1] * 100
             test_score = clf.score(X_test, y_test)
 
         except Exception as e:
-            st.warning(f"⚠️ Ошибка ML: {e}. Используем простую логику.")
+            st.warning(f"⚠️ Помилка ML: {e}. Використовуємо просту логіку.")
             final_features['prob_dying'] = final_features['label'].astype(float) * 100
             test_score = 0.0
     else:
-        st.warning("⚠️ Недостаточно данных для ML. Используем простую логику.")
+        st.warning("⚠️ Недостатньо даних для ML. Використовуємо просту логіку.")
         final_features['prob_dying'] = final_features['label'].astype(float) * 100
         test_score = 0.0
 
@@ -594,150 +595,150 @@ def create_prophet_forecasts(df, abc_analysis):
             return pd.DataFrame(forecasts)
             
     except Exception as e:
-        st.warning(f"⚠️ Ошибка Prophet: {e}")
+        st.warning(f"⚠️ Помилка Prophet: {e}")
         return pd.DataFrame()
 
 def get_recommendations(row):
-    # Формирование причин
+    # Формування причин
     reasons = []
-    
-    if row['abc_category'] == 'C': 
-        reasons.append("Категория C")
+
+    if row['abc_category'] == 'C':
+        reasons.append("Категорія C")
     elif row['abc_category'] == 'B':
-        reasons.append("Категория B")
-    
+        reasons.append("Категорія B")
+
     if row['consecutive_zeros'] >= zero_weeks_threshold * 2:
-        reasons.append(f"Без продаж {int(row['consecutive_zeros'])} недель (критично!)")
-    elif row['consecutive_zeros'] >= zero_weeks_threshold: 
-        reasons.append(f"Без продаж {int(row['consecutive_zeros'])} недель")
-    
-    if row['zero_weeks_12'] >= zero_weeks_threshold // 2: 
-        reasons.append(f"Из 12 недель {int(row['zero_weeks_12'])} без продаж")
-    
-    if row['no_store_ratio'] > max_store_ratio: 
+        reasons.append(f"Без продажів {int(row['consecutive_zeros'])} тижнів (критично!)")
+    elif row['consecutive_zeros'] >= zero_weeks_threshold:
+        reasons.append(f"Без продажів {int(row['consecutive_zeros'])} тижнів")
+
+    if row['zero_weeks_12'] >= zero_weeks_threshold // 2:
+        reasons.append(f"З 12 тижнів {int(row['zero_weeks_12'])} без продажів")
+
+    if row['no_store_ratio'] > max_store_ratio:
         stores_with_sales_pct = (1 - row['no_store_ratio']) * 100
-        reasons.append(f"Продажи в {stores_with_sales_pct:.0f}% магазинов")
-    
-    if row['total_qty'] < min_total_sales: 
-        reasons.append(f"Малый объем ({row['total_qty']:.1f})")
+        reasons.append(f"Продажі в {stores_with_sales_pct:.0f}% магазинів")
+
+    if row['total_qty'] < min_total_sales:
+        reasons.append(f"Малий обсяг ({row['total_qty']:.1f})")
     elif row['total_qty'] < min_total_sales * 2:
-        reasons.append(f"Низкий объем ({row['total_qty']:.1f})")
-    
-    if row['trend'] < -0.1: 
-        reasons.append("Негативный тренд")
-    
-    # Добавляем дату последней продажи
+        reasons.append(f"Низький обсяг ({row['total_qty']:.1f})")
+
+    if row['trend'] < -0.1:
+        reasons.append("Негативний тренд")
+
+    # Додаємо дату останнього продажу
     if pd.notnull(row.get('last_sale')):
         last_sale_str = row['last_sale'].strftime('%Y-%m-%d')
-        reasons.append(f"Последняя продажа: {last_sale_str}")
-    
-    reason = "; ".join(reasons) if reasons else "Стабильные продажи"
-    
-    # КРИТИЧНЫЕ СЛУЧАИ - переопределение независимо от ML
-    # 1. Экстремально долгое отсутствие продаж
-    if row['consecutive_zeros'] >= zero_weeks_threshold * 3:  # 36 недель
-        return reason, "🚫 Снять"
-    
-    # 2. Категория C с превышением всех порогов
-    if (row['abc_category'] == 'C' and 
-        row['consecutive_zeros'] >= zero_weeks_threshold and 
+        reasons.append(f"Останній продаж: {last_sale_str}")
+
+    reason = "; ".join(reasons) if reasons else "Стабільні продажі"
+
+    # КРИТИЧНІ ВИПАДКИ - перевизначення незалежно від ML
+    # 1. Екстремально тривала відсутність продажів
+    if row['consecutive_zeros'] >= zero_weeks_threshold * 3:  # 36 тижнів
+        return reason, "🚫 Зняти"
+
+    # 2. Категорія C з перевищенням всіх порогів
+    if (row['abc_category'] == 'C' and
+        row['consecutive_zeros'] >= zero_weeks_threshold and
         row['total_qty'] < min_total_sales and
         row['no_store_ratio'] > max_store_ratio):
-        return reason, "🚫 Снять"
-    
-    # 3. Категория B с критическими показателями
-    if (row['abc_category'] == 'B' and 
-        row['consecutive_zeros'] >= zero_weeks_threshold * 2 and 
+        return reason, "🚫 Зняти"
+
+    # 3. Категорія B з критичними показниками
+    if (row['abc_category'] == 'B' and
+        row['consecutive_zeros'] >= zero_weeks_threshold * 2 and
         row['no_store_ratio'] > max_store_ratio):
-        return reason, "🚫 Снять"
-    
-    # 4. Долгое отсутствие + низкое распространение для B
+        return reason, "🚫 Зняти"
+
+    # 4. Тривала відсутність + низьке поширення для B
     if (row['abc_category'] == 'B' and
         row['consecutive_zeros'] >= zero_weeks_threshold * 1.5 and
         row['no_store_ratio'] > 0.85 and
         row['total_qty'] < min_total_sales * 2):
-        return reason, "⚠️ Наблюдать"
-    
-    # Стандартная логика на основе ML
-    prob_threshold_pct = final_threshold * 100
-    
-    if row['prob_dying'] > prob_threshold_pct:
-        return reason, "🚫 Снять"
-    elif row['prob_dying'] > prob_threshold_pct * 0.7:
-        return reason, "⚠️ Наблюдать"
-    
-    # Дополнительные проверки для "Наблюдать"
-    if (row['consecutive_zeros'] >= zero_weeks_threshold and 
-        row['no_store_ratio'] > 0.75):
-        return reason, "⚠️ Наблюдать"
-    
-    return reason, "✅ Оставить"
+        return reason, "⚠️ Спостерігати"
 
-# Выполнение анализа
+    # Стандартна логіка на основі ML
+    prob_threshold_pct = final_threshold * 100
+
+    if row['prob_dying'] > prob_threshold_pct:
+        return reason, "🚫 Зняти"
+    elif row['prob_dying'] > prob_threshold_pct * 0.7:
+        return reason, "⚠️ Спостерігати"
+
+    # Додаткові перевірки для "Спостерігати"
+    if (row['consecutive_zeros'] >= zero_weeks_threshold and
+        row['no_store_ratio'] > 0.75):
+        return reason, "⚠️ Спостерігати"
+
+    return reason, "✅ Залишити"
+
+# Виконання аналізу
 df, weekly, all_arts, unique_weeks = process_data(df)
 abc_analysis = calculate_abc_xyz_analysis(df)
 features = calculate_features(weekly, df)
 final_features, test_score = create_ml_model(features, abc_analysis)
 forecast_df = create_prophet_forecasts(df, abc_analysis)
 
-# Финальная таблица
+# Фінальна таблиця
 final = final_features.merge(abc_analysis[['Art', 'xyz_category', 'last_sale']], on='Art', how='left')
 if not forecast_df.empty:
     final = final.merge(forecast_df, on='Art', how='left')
 final = final.merge(df[['Art', 'Name']].drop_duplicates(), on='Art', how='left')
 
-# Получение рекомендаций
+# Отримання рекомендацій
 recommendations = final.apply(get_recommendations, axis=1)
 final['Причина'] = [rec[0] for rec in recommendations]
-final['Рекомендация'] = [rec[1] for rec in recommendations]
+final['Рекомендація'] = [rec[1] for rec in recommendations]
 
-# === РЕЗУЛЬТАТЫ ===
-st.header("📊 Результаты анализа")
+# === РЕЗУЛЬТАТИ ===
+st.header("📊 Результати аналізу")
 
 total_products = len(final)
-candidates_remove = len(final[final['Рекомендация'] == "🚫 Снять"])
-candidates_watch = len(final[final['Рекомендация'] == "⚠️ Наблюдать"])
+candidates_remove = len(final[final['Рекомендація'] == "🚫 Зняти"])
+candidates_watch = len(final[final['Рекомендація'] == "⚠️ Спостерігати"])
 
 col1, col2, col3, col4 = st.columns(4)
-with col1: st.metric("Всего товаров", total_products)
-with col2: st.metric("К снятию", candidates_remove, f"{candidates_remove/total_products*100:.1f}%")
-with col3: st.metric("Наблюдать", candidates_watch, f"{candidates_watch/total_products*100:.1f}%")
-with col4: st.metric("Точность модели", f"{test_score:.2f}" if test_score > 0 else "N/A")
+with col1: st.metric("Всього товарів", total_products)
+with col2: st.metric("До зняття", candidates_remove, f"{candidates_remove/total_products*100:.1f}%")
+with col3: st.metric("Спостерігати", candidates_watch, f"{candidates_watch/total_products*100:.1f}%")
+with col4: st.metric("Точність моделі", f"{test_score:.2f}" if test_score > 0 else "N/A")
 
-# ABC/XYZ распределение
-st.subheader("📈 ABC/XYZ анализ")
+# ABC/XYZ розподіл
+st.subheader("📈 ABC/XYZ аналіз")
 abc_dist = final['abc_category'].value_counts()
 xyz_dist = final['xyz_category'].value_counts()
 
 col1, col2 = st.columns(2)
 with col1:
-    st.write("**ABC категории:**")
+    st.write("**ABC категорії:**")
     st.write(f"A: {abc_dist.get('A', 0)}, B: {abc_dist.get('B', 0)}, C: {abc_dist.get('C', 0)}")
 with col2:
-    st.write("**XYZ категории:**")
+    st.write("**XYZ категорії:**")
     st.write(f"X: {xyz_dist.get('X', 0)}, Y: {xyz_dist.get('Y', 0)}, Z: {xyz_dist.get('Z', 0)}")
 
-# === ФИЛЬТРЫ И ТАБЛИЦА ===
-st.subheader("🔍 Фильтры")
+# === ФІЛЬТРИ І ТАБЛИЦЯ ===
+st.subheader("🔍 Фільтри")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    filter_recommendation = st.selectbox("Рекомендация:", ["Все", "🚫 Снять", "⚠️ Наблюдать", "✅ Оставить"])
-    filter_abc = st.selectbox("ABC:", ["Все", "A", "B", "C"])
+    filter_recommendation = st.selectbox("Рекомендація:", ["Всі", "🚫 Зняти", "⚠️ Спостерігати", "✅ Залишити"])
+    filter_abc = st.selectbox("ABC:", ["Всі", "A", "B", "C"])
 with col2:
-    min_prob = st.slider("Мин. вероятность (%)", 0, 100, 0)
-    filter_xyz = st.selectbox("XYZ:", ["Все", "X", "Y", "Z"])
+    min_prob = st.slider("Мін. ймовірність (%)", 0, 100, 0)
+    filter_xyz = st.selectbox("XYZ:", ["Всі", "X", "Y", "Z"])
 with col3:
-    min_zero_weeks = st.slider("Мин. недель без продаж", 0, 20, 0)
-    search_art = st.text_input("Поиск артикула/названия")
+    min_zero_weeks = st.slider("Мін. тижнів без продажів", 0, 20, 0)
+    search_art = st.text_input("Пошук артикула/назви")
 
-# Применение фильтров
+# Застосування фільтрів
 filtered_df = final.copy()
-if filter_recommendation != "Все":
-    filtered_df = filtered_df[filtered_df['Рекомендация'] == filter_recommendation]
-if filter_abc != "Все":
+if filter_recommendation != "Всі":
+    filtered_df = filtered_df[filtered_df['Рекомендація'] == filter_recommendation]
+if filter_abc != "Всі":
     filtered_df = filtered_df[filtered_df['abc_category'] == filter_abc]
-if filter_xyz != "Все":
+if filter_xyz != "Всі":
     filtered_df = filtered_df[filtered_df['xyz_category'] == filter_xyz]
 
 filtered_df = filtered_df[
@@ -750,10 +751,10 @@ if search_art:
             filtered_df['Name'].astype(str).str.contains(search_art, case=False, na=False))
     filtered_df = filtered_df[mask]
 
-# Таблица результатов
-st.subheader(f"📋 Результаты ({len(filtered_df)} товаров)")
+# Таблиця результатів
+st.subheader(f"📋 Результати ({len(filtered_df)} товарів)")
 
-display_columns = ['Art', 'Name', 'abc_category', 'xyz_category', 'total_qty', 'consecutive_zeros', 'no_store_ratio', 'prob_dying', 'Причина', 'Рекомендация']
+display_columns = ['Art', 'Name', 'abc_category', 'xyz_category', 'total_qty', 'consecutive_zeros', 'no_store_ratio', 'prob_dying', 'Причина', 'Рекомендація']
 if 'forecast_30_median' in filtered_df.columns:
     display_columns.insert(-2, 'forecast_30_median')
 
@@ -761,40 +762,40 @@ display_df = filtered_df[display_columns].copy()
 display_df['no_store_ratio'] = (display_df['no_store_ratio'] * 100).round(1)
 display_df['prob_dying'] = display_df['prob_dying'].round(1)
 
-column_names = ['Артикул', 'Название', 'ABC', 'XYZ', 'Объем', 'Недель_без_продаж', 'Магазины_без_продаж_%', 'Вероятность_снятия_%']
+column_names = ['Артикул', 'Назва', 'ABC', 'XYZ', 'Обсяг', 'Тижнів_без_продажів', 'Магазини_без_продажів_%', 'Ймовірність_зняття_%']
 if 'forecast_30_median' in display_df.columns:
     column_names.append('Прогноз_30дн')
-column_names.extend(['Причина', 'Рекомендация'])
+column_names.extend(['Причина', 'Рекомендація'])
 
 display_df.columns = column_names
 st.dataframe(display_df, use_container_width=True)
 
-# === ЭКСПОРТ ===
-st.subheader("💾 Экспорт")
-if st.button("📥 Подготовить Excel"):
+# === ЕКСПОРТ ===
+st.subheader("💾 Експорт")
+if st.button("📥 Підготувати Excel"):
     try:
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            output_cols = ['Art', 'Name', 'abc_category', 'xyz_category', 'total_qty', 'consecutive_zeros', 'no_store_ratio', 'prob_dying', 'Причина', 'Рекомендация']
+            output_cols = ['Art', 'Name', 'abc_category', 'xyz_category', 'total_qty', 'consecutive_zeros', 'no_store_ratio', 'prob_dying', 'Причина', 'Рекомендація']
             if 'forecast_30_median' in final.columns:
                 output_cols.insert(-2, 'forecast_30_median')
-            
-            final[output_cols].to_excel(writer, sheet_name='Результаты', index=False)
-            
+
+            final[output_cols].to_excel(writer, sheet_name='Результати', index=False)
+
             stats = pd.DataFrame({
-                'Метрика': ['Всего', 'Снять', 'Наблюдать', 'Оставить', 'Порог_ML_%'],
-                'Значение': [total_products, candidates_remove, candidates_watch, 
+                'Метрика': ['Всього', 'Зняти', 'Спостерігати', 'Залишити', 'Поріг_ML_%'],
+                'Значення': [total_products, candidates_remove, candidates_watch,
                            total_products - candidates_remove - candidates_watch, final_threshold*100]
             })
             stats.to_excel(writer, sheet_name='Статистика', index=False)
-        
-        st.download_button("📥 Скачать Excel", buffer.getvalue(), "analysis_results.xlsx", 
+
+        st.download_button("📥 Завантажити Excel", buffer.getvalue(), "analysis_results.xlsx",
                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         st.success("✅ Готово!")
     except Exception as e:
-        st.error(f"❌ Ошибка: {str(e)}")
+        st.error(f"❌ Помилка: {str(e)}")
 
-with st.expander("ℹ️ Информация"):
-    st.write(f"**Статус:** Prophet {'✅' if PROPHET_AVAILABLE else '❌'}, Обработано: {len(final)}")
+with st.expander("ℹ️ Інформація"):
+    st.write(f"**Статус:** Prophet {'✅' if PROPHET_AVAILABLE else '❌'}, Оброблено: {len(final)}")
     if not PROPHET_AVAILABLE:
-        st.warning("⚠️ Установите Prophet: pip install prophet")
+        st.warning("⚠️ Встановіть Prophet: pip install prophet")
