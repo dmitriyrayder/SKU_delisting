@@ -718,6 +718,95 @@ with col2:
     st.write("**XYZ категорії:**")
     st.write(f"X: {xyz_dist.get('X', 0)}, Y: {xyz_dist.get('Y', 0)}, Z: {xyz_dist.get('Z', 0)}")
 
+# === НОВИЙ РОЗДІЛ: СТАТИСТИКА ДЛЯ ПРОДАЖІВ ТА МАРКЕТИНГУ ===
+st.header("📈 Аналітика для відділу продажів та маркетингу")
+
+# Розрахунок додаткових метрик
+total_sales_volume = final['total_qty'].sum()
+remove_sales_volume = final[final['Рекомендація'] == "🚫 Зняти"]['total_qty'].sum()
+watch_sales_volume = final[final['Рекомендація'] == "⚠️ Спостерігати"]['total_qty'].sum()
+keep_sales_volume = final[final['Рекомендація'] == "✅ Залишити"]['total_qty'].sum()
+
+# 1. Зведена таблиця за рекомендаціями та ABC
+st.subheader("📊 Зведена таблиця: Рекомендації × ABC категорії")
+
+summary_pivot = pd.crosstab(
+    final['Рекомендація'],
+    final['abc_category'],
+    values=final['total_qty'],
+    aggfunc='sum',
+    margins=True,
+    margins_name='Разом'
+).fillna(0).astype(int)
+
+st.dataframe(summary_pivot.style.format("{:,}"), use_container_width=True)
+
+# 2. Таблиця з ключовими метриками
+st.subheader("💼 Ключові бізнес-метрики")
+
+metrics_data = {
+    'Категорія': ['🚫 Зняти', '⚠️ Спостерігати', '✅ Залишити', '**РАЗОМ**'],
+    'Кількість товарів': [candidates_remove, candidates_watch, candidates_keep, total_products],
+    '% від асортименту': [
+        f"{candidates_remove/total_products*100:.1f}%",
+        f"{candidates_watch/total_products*100:.1f}%",
+        f"{candidates_keep/total_products*100:.1f}%",
+        "100%"
+    ],
+    'Обсяг продажів (од.)': [
+        f"{remove_sales_volume:,.0f}",
+        f"{watch_sales_volume:,.0f}",
+        f"{keep_sales_volume:,.0f}",
+        f"{total_sales_volume:,.0f}"
+    ],
+    '% від обороту': [
+        f"{remove_sales_volume/total_sales_volume*100:.1f}%",
+        f"{watch_sales_volume/total_sales_volume*100:.1f}%",
+        f"{keep_sales_volume/total_sales_volume*100:.1f}%",
+        "100%"
+    ]
+}
+
+metrics_df = pd.DataFrame(metrics_data)
+st.dataframe(metrics_df, use_container_width=True, hide_index=True)
+
+# 3. Топ-20 товарів до зняття
+st.subheader("🔴 Топ-20 товарів до зняття (за обсягом продажів)")
+
+remove_candidates = final[final['Рекомендація'] == "🚫 Зняти"].nlargest(20, 'total_qty')
+remove_display = remove_candidates[['Art', 'Name', 'abc_category', 'total_qty', 'consecutive_zeros', 'no_store_ratio', 'Причина']].copy()
+remove_display['no_store_ratio'] = (remove_display['no_store_ratio'] * 100).round(1).astype(str) + '%'
+remove_display.columns = ['Артикул', 'Назва', 'ABC', 'Обсяг продажів', 'Тижнів без продажів', 'Магазинів без продажів', 'Причина']
+
+st.dataframe(remove_display, use_container_width=True, hide_index=True)
+
+# 4. Товари під спостереженням
+st.subheader("🟡 Топ-20 товарів під спостереженням")
+
+watch_candidates = final[final['Рекомендація'] == "⚠️ Спостерігати"].nlargest(20, 'total_qty')
+watch_display = watch_candidates[['Art', 'Name', 'abc_category', 'total_qty', 'consecutive_zeros', 'prob_dying', 'Причина']].copy()
+watch_display['prob_dying'] = watch_display['prob_dying'].round(1).astype(str) + '%'
+watch_display.columns = ['Артикул', 'Назва', 'ABC', 'Обсяг продажів', 'Тижнів без продажів', 'Ризик зняття', 'Причина']
+
+st.dataframe(watch_display, use_container_width=True, hide_index=True)
+
+# 5. Статистика по магазинах
+st.subheader("🏪 Розподіл продажів по магазинах")
+
+store_stats = df.groupby('Magazin').agg({
+    'Art': 'nunique',
+    'Qty': 'sum'
+}).reset_index()
+store_stats.columns = ['Магазин', 'Унікальних товарів', 'Обсяг продажів']
+store_stats = store_stats.sort_values('Обсяг продажів', ascending=False)
+
+col1, col2 = st.columns([2, 1])
+with col1:
+    st.dataframe(store_stats, use_container_width=True, hide_index=True)
+with col2:
+    st.metric("Всього магазинів", len(store_stats))
+    st.metric("Середній оборот", f"{store_stats['Обсяг продажів'].mean():,.0f} од.")
+
 # === ФІЛЬТРИ І ТАБЛИЦЯ ===
 st.subheader("🔍 Фільтри")
 col1, col2, col3 = st.columns(3)
@@ -789,6 +878,16 @@ if st.button("📥 Підготувати Excel"):
             })
             stats.to_excel(writer, sheet_name='Статистика', index=False)
 
+            # Зведена таблиця
+            summary_pivot.to_excel(writer, sheet_name='Зведена_ABC')
+
+            # Бізнес-метрики
+            metrics_df.to_excel(writer, sheet_name='Бізнес_метрики', index=False)
+
+            # Топ до зняття
+            if len(remove_display) > 0:
+                remove_display.to_excel(writer, sheet_name='Топ_до_зняття', index=False)
+
         st.download_button("📥 Завантажити Excel", buffer.getvalue(), "analysis_results.xlsx",
                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         st.success("✅ Готово!")
@@ -799,3 +898,6 @@ with st.expander("ℹ️ Інформація"):
     st.write(f"**Статус:** Prophet {'✅' if PROPHET_AVAILABLE else '❌'}, Оброблено: {len(final)}")
     if not PROPHET_AVAILABLE:
         st.warning("⚠️ Встановіть Prophet: pip install prophet")
+
+st.divider()
+st.caption("📊 Звіт згенеровано системою аналізу товарного портфеля")
