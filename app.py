@@ -361,9 +361,15 @@ def calculate_abc_xyz_analysis(df):
 
     # ABC категорії (виправлено: сортування перед кумулятивним розрахунком)
     abc_analysis = abc_analysis.sort_values('total_qty', ascending=False).reset_index(drop=True)
-    abc_analysis['cum_qty'] = abc_analysis['total_qty'].cumsum()
     total_sum = abc_analysis['total_qty'].sum()
-    abc_analysis['cum_qty_pct'] = abc_analysis['cum_qty'] / total_sum if total_sum > 0 else 0
+
+    # Захист від ділення на нуль
+    if total_sum > 0:
+        abc_analysis['cum_qty'] = abc_analysis['total_qty'].cumsum()
+        abc_analysis['cum_qty_pct'] = abc_analysis['cum_qty'] / total_sum
+    else:
+        abc_analysis['cum_qty'] = 0
+        abc_analysis['cum_qty_pct'] = 0
 
     def get_abc_category(cum_pct):
         if cum_pct <= 0.8: return 'A'
@@ -522,8 +528,8 @@ def create_ml_model(features, abc_analysis):
     
     st.write(f"**Розподіл:** Зняти: {y.sum()}, Залишити: {len(y) - y.sum()}")
 
-    # Перевірка можливості навчання
-    if len(y.unique()) > 1 and y.sum() >= 2:
+    # Перевірка можливості навчання (покращено: мінімум 2 зразки в кожному класі)
+    if len(y.unique()) > 1 and y.sum() >= 2 and len(y) - y.sum() >= 2:
         try:
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y,
@@ -683,9 +689,14 @@ forecast_df = create_prophet_forecasts(df, abc_analysis)
 
 # Фінальна таблиця
 final = final_features.merge(abc_analysis[['Art', 'xyz_category', 'last_sale']], on='Art', how='left')
+
+# Перевірка перед мерджем forecast_df
 if not forecast_df.empty:
     final = final.merge(forecast_df, on='Art', how='left')
+
+# Обробка пустих Name
 final = final.merge(df[['Art', 'Name']].drop_duplicates(), on='Art', how='left')
+final['Name'] = final['Name'].fillna('Без назви')
 
 # Отримання рекомендацій
 recommendations = final.apply(get_recommendations, axis=1)
@@ -698,6 +709,7 @@ st.header("📊 Результати аналізу")
 total_products = len(final)
 candidates_remove = len(final[final['Рекомендація'] == "🚫 Зняти"])
 candidates_watch = len(final[final['Рекомендація'] == "⚠️ Спостерігати"])
+candidates_keep = len(final[final['Рекомендація'] == "✅ Залишити"])
 
 col1, col2, col3, col4 = st.columns(4)
 with col1: st.metric("Всього товарів", total_products)
