@@ -561,7 +561,7 @@ def create_prophet_forecasts(df, abc_analysis):
         return pd.DataFrame()
     
     try:
-        with st.spinner("📈 Прогнозы Prophet..."):
+        with st.spinner("📈 Прогнози Prophet..."):
             top_arts = abc_analysis.nlargest(TOP_N, 'total_qty')['Art']
             forecasts = []
             
